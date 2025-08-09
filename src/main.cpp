@@ -8,8 +8,10 @@
 
 #define RUN_SIM
 
+const std::string kDataPath = "../Input Data/Raw Text/enwiki 2020-10-20";
+
 int main() {
-	MetadataFile metadata("../Input Data/Raw Text/enwiki 2020-10-20/.metadata.json");
+	MetadataFile metadata(kDataPath + "/.metadata.json");
 
 #ifdef RUN_SIM
 	CandidatesFile candidates(metadata, 10);
@@ -17,9 +19,9 @@ int main() {
 	generator.Generate();
 	std::vector <std::string> solution = generator.GetSolution();
 	std::cout << "Final solution has " << solution.size() << " tokens." << std::endl;
-	TokenFile tkn(solution, metadata.GetRootPath() / ".tokens.json");
+	TokenFile tkn(solution, kDataPath + "/.tokens.json");
 #else
-	TokenFile tkn(metadata.GetRootPath() / ".tokens.json");
+	TokenFile tkn(kDataPath + "/.tokens.json");
 #endif
 
 	std::string test_file = metadata.GetFiles().back().path;
