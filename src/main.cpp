@@ -17,7 +17,7 @@ int main() {
 	generator.Generate();
 	std::vector <std::string> solution = generator.GetSolution();
 	std::cout << "Final solution has " << solution.size() << " tokens." << std::endl;
-	TokenFile tkn(solution, metadata.GetRootPath() / ".tokens.json");*/
+	TokenFile tkn(solution, metadata.GetRootPath() / ".tokens.json");
 #else
 	TokenFile tkn(metadata.GetRootPath() / ".tokens.json");
 #endif
