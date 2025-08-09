@@ -2,22 +2,20 @@
 
 #include <unordered_map>
 
-#include "JsonFile.h"
 #include "MetadataFile.h"
 
-class CandidatesFile : public JsonFile {
-	const MetadataFile &metadata_;
+class CandidatesFile {
+	const std::string file_path_;
+	std::unordered_map <std::string, size_t> candidates_;
 
-	bool Validate();
-	void BuildDoc(size_t max_len, size_t file_cnt);
+	void BuildCandidates(const MetadataFile &metadata, size_t max_len, size_t file_cnt);
+
+	bool ReadFile();
+	void WriteFile();
 
 public:
-	struct Entry {
-		const std::string name;
-		size_t freq;
-	};
 
-	explicit CandidatesFile(const MetadataFile &metadata, size_t max_len, size_t file_cnt = -1, bool rebuild = false);
+	CandidatesFile(const MetadataFile &metadata, size_t max_len, size_t file_cnt = -1, bool rebuild = false);
 
-	[[nodiscard]] std::unordered_map <std::string, size_t> GetCandidates() const;
+	[[nodiscard]] const std::unordered_map <std::string, size_t> &GetCandidates() const { return candidates_; }
 };

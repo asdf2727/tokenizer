@@ -3,14 +3,13 @@
 #include <iostream>
 #include <cmath>
 
-TokenGenerator::TokenGenerator(const CandidatesFile &candidates, const size_t pref_token_count):
+TokenGenerator::TokenGenerator(const std::unordered_map <std::string, size_t> &cands, const size_t pref_token_count):
 	pref_cand_(pref_token_count) {
 	char temp[2] = {'\0', '\0'};
 	for (int i = 0; i < 256; i++) {
 		temp[0] = i;
 		uses_[temp].enabled = true;
 	}
-	const auto cands = candidates.GetCandidates();
 	std::cout << "Initializing " << cands.size() << " candidates... " << std::flush;
 	for (const auto &[token, freq] : cands) {
 		uses_[token].uses = freq;

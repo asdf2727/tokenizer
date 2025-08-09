@@ -12,12 +12,10 @@ const std::string kStartToken = "<START>";
 const std::string kEndToken = "<END>";
 
 bool TokenFile::Validate() {
-	if (doc_.HasParseError()) return false;
 	if (!doc_.IsObject()) return false;
-
 	if (!doc_.HasMember("version")) return false;
 	if (!doc_["version"].IsString()) return false;
-	if (strcmp(doc_["version"].GetString(), kBuildVersion) != 0) return false;
+	if (kBuildVersion == doc_["version"].GetString()) return false;
 
 	if (!doc_.HasMember("tokens")) return false;
 	if (!doc_["tokens"].IsArray()) return false;
@@ -31,7 +29,7 @@ void TokenFile::BuildDoc() {
 	modified_ = true;
 	doc_.SetObject();
 	json::Document::AllocatorType &alloc = doc_.GetAllocator();
-	doc_.AddMember("version", json::StringRef(kBuildVersion), alloc);
+	doc_.AddMember("version", json::StringRef(kBuildVersion.c_str()), alloc);
 
 	json::Value tokens(json::kArrayType);
 	for (size_t i = 2; i < ids_.size(); i++) {

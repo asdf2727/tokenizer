@@ -11,7 +11,7 @@ protected:
 	rapidjson::Document doc_;
 
 public:
-	explicit JsonFile (const std::string &path, bool no_read);
+	explicit JsonFile (std::string path, bool no_read);
 	~JsonFile ();
 
 	[[nodiscard]] bool IsValid() const { return valid_; };

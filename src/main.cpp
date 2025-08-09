@@ -8,14 +8,14 @@
 
 #define RUN_SIM
 
-const std::string kDataPath = "../Input Data/Raw Text/enwiki 2020-10-20";
+const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
 
 int main() {
 	MetadataFile metadata(kDataPath + "/.metadata.json");
 
 #ifdef RUN_SIM
 	CandidatesFile candidates(metadata, 10);
-	TokenGenerator generator(candidates, 30000);
+	TokenGenerator generator(candidates.GetCandidates(), 30000);
 	generator.Generate();
 	std::vector <std::string> solution = generator.GetSolution();
 	std::cout << "Final solution has " << solution.size() << " tokens." << std::endl;

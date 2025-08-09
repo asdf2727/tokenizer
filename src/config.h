@@ -1,3 +1,3 @@
 #pragma once
 
-inline const auto kBuildVersion = "0.1.0";
+const std::string kBuildVersion = "0.1.1";

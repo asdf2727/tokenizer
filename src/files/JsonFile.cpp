@@ -2,14 +2,17 @@
 
 #include <fstream>
 #include <iostream>
+#include <utility>
 
 #include "rapidjson/document.h"
 #include "rapidjson/filereadstream.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/filewritestream.h"
 
-JsonFile::JsonFile (const std::string &path, const bool no_read) :
-	path_(path) {
+#include "../config.h"
+
+JsonFile::JsonFile (std::string path, const bool no_read) :
+	path_(std::move(path)) {
 	valid_ = false;
 	if (no_read) return;
 	FILE *fp = fopen(path_.c_str(), "r");
@@ -18,10 +21,9 @@ JsonFile::JsonFile (const std::string &path, const bool no_read) :
 	rapidjson::FileReadStream frs(fp, buffer, sizeof buffer);
 	doc_.ParseStream(frs);
 	fclose(fp);
-	if (doc_.HasParseError()) {
-		std::cerr << "Json parse error " << doc_.GetParseError() << " in file " << path << std::endl;
-		return;
-	}
+
+	if (doc_.HasParseError()) return;
+
 	valid_ = true;
 }
 JsonFile::~JsonFile () {

@@ -37,7 +37,7 @@ class TokenGenerator {
 	size_t gen_cnt_ = 0;
 
 public:
-	TokenGenerator(const CandidatesFile &candidates, size_t pref_token_count);
+	TokenGenerator(const std::unordered_map <std::string, size_t> &cands, size_t pref_token_count);
 
 	void Generate();
 	std::vector <std::string> GetSolution() const;
