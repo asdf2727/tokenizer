@@ -6,7 +6,18 @@ Don't worry! I have devised a new method that is a lot slower, finickier and alm
 
 ## How to use
 
-Download [this](https://www.kaggle.com/datasets/ltcmdrdata/plain-text-wikipedia-202011?resource=download-directory) dataset and modify the link in the main file (it's a WIP) to reference the folder with the extracted files. The program will then parse all files and create a hidden metadata and candidates file that will be used for training. Finally, a tokens file will be created and ran on the last file as a benchmark. After this, you can input any text to see how the tokenizer handles it.
+1. Clone the repo
+2. Download [this](https://www.kaggle.com/datasets/ltcmdrdata/plain-text-wikipedia-202011?resource=download-directory) dataset
+3. modify the path to the data folder in the main file (it's a WIP).
+4. In the cloned repo, run
+
+   ```shell
+   cmake -B cmake-build && cmake --build "cmake-build" --target tokenizer
+   ```
+
+5. Run the `cmake-build/tokenizer` executable. If using a relative path in step 3, remember to run from the same directory used there as reference.
+
+Once the `.tokens.json` file is built in the data folder, you can comment out `#define RUN_SIM` in main to skip generation of a new vocabulary.
 
 ## Note
-The parameters for annealing are chosen with vibes, but they should work pretty well for this particular data set (I later plan to make an adaptive cooling schedule).
+The parameters for annealing (somewhere in `tokenizer/TokenGenerator.cpp`) are chosen with vibes, but they should work pretty well for this particular data set (I plan to make an adaptive cooling schedule later).

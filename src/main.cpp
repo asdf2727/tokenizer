@@ -9,7 +9,7 @@
 #define RUN_SIM
 
 int main() {
-	MetadataFile metadata("../../Input Data/Raw Text/enwiki 2020-10-20/.metadata.json");
+	MetadataFile metadata("../Input Data/Raw Text/enwiki 2020-10-20/.metadata.json");
 
 #ifdef RUN_SIM
 	CandidatesFile candidates(metadata, 10);
