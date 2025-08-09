@@ -14,7 +14,7 @@ int main() {
 	MetadataFile metadata(kDataPath + "/.metadata.json");
 
 #ifdef RUN_SIM
-	CandidatesFile candidates(metadata, 10);
+	CandidatesFile candidates(metadata, 10, -1, true);
 	TokenGenerator generator(candidates, 30000);
 	generator.Generate();
 	std::vector <std::string> solution = generator.GetSolution();

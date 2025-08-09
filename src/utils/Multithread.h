@@ -33,7 +33,7 @@ template <typename EnvT, typename TaskT>
 void DistributeTasks(std::ostream &out,
                      EnvT &env,
                      std::vector <TaskT> &tasks,
-                     bool (*process)(EnvT &, TaskT &),
+                     bool (*process)(EnvT &, TaskT &, size_t),
                      size_t thread_cnt = std::thread::hardware_concurrency()) {
 	thread_cnt = std::min(thread_cnt, tasks.size());
 	std::vector <std::thread> threads;
@@ -68,7 +68,7 @@ void DistributeTasks(std::ostream &out,
 					running_index = next_task;
 					running_task = tasks[next_task++];
 				}
-				const bool valid = process(env, running_task);
+				const bool valid = process(env, running_task, tid);
 				{
 					std::unique_lock lock(print_mutex);
 					if (!valid) {

@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <ranges>
 
 #include "../utils/Multithread.h"
 #include "../config.h"
@@ -38,8 +39,7 @@ bool CandidatesFile::Validate() {
 
 struct CandidatesEnv {
 	size_t max_token_length;
-	std::mutex map_mutex;
-	std::vector <CandidatesFile::Entry> cand;
+	std::map <size_t, std::map <std::string, size_t>> cand;
 
 	CandidatesEnv(const size_t max_length) : max_token_length(max_length) {}
 };
@@ -48,51 +48,20 @@ struct CandidatesTask {
 	std::string file_path;
 };
 
-bool FileScanCandidates(CandidatesEnv &env, CandidatesTask &task) {
+bool FileScanCandidates(CandidatesEnv &env, CandidatesTask &task, size_t tid) {
 	const DataFile data(task.file_path);
 	if (!data.IsValid()) return false;
 
-	std::vector <CandidatesFile::Entry> local_cand;
-	{
-		std::map <std::string, size_t> local_freq;
-		for (const DataFile::Entry &entry : data.GetEntries()) {
-			std::string text = entry.text;
-			std::ranges::transform(text, text.begin(),
-								   [](const unsigned char c) { return std::tolower(c); });
-			for (size_t i = 0; i < text.size(); i++) {
-				for (size_t len = 1; len <= std::min(env.max_token_length, text.size() - i); len++) {
-					local_freq[text.substr(i, len)]++;
-					if (text[i + len] == ' ') break;
-				}
+	std::map <std::string, size_t> &local_freq = env.cand[tid];
+	for (const DataFile::Entry &entry : data.GetEntries()) {
+		std::string text = entry.text;
+		std::ranges::transform(text, text.begin(),
+							   [](const unsigned char c) { return std::tolower(c); });
+		for (size_t i = 0; i < text.size(); i++) {
+			for (size_t len = 1; len <= std::min(env.max_token_length, text.size() - i); len++) {
+				local_freq[text.substr(i, len)]++;
+				if (text[i + len] == ' ') break;
 			}
-		}
-		for (const auto &[key, value] : local_freq) {
-			local_cand.emplace_back(key, value);
-		}
-	}
-	{
-		std::unique_lock lock(env.map_mutex);
-		auto it = env.cand.begin();
-		auto local_it = local_cand.begin();
-		std::vector <CandidatesFile::Entry> temp;
-		temp.reserve(local_cand.size() + env.cand.size());
-		while (it != env.cand.end() && local_it != local_cand.end()) {
-			while (it != env.cand.end() && it->name < local_it->name) {
-				temp.push_back(std::move(*it++));
-			}
-			if (it == env.cand.end()) break;
-			if (it->name == local_it->name) {
-				temp.push_back(std::move(*it++));
-				temp.back().freq += local_it->freq;
-			}
-			else {
-				temp.push_back(std::move(*local_it));
-			}
-			++local_it;
-		}
-		std::swap(env.cand, temp);
-		while (local_it != local_cand.end()) {
-			env.cand.push_back(std::move(*local_it++));
 		}
 	}
 	return true;
@@ -117,8 +86,16 @@ void CandidatesFile::BuildDoc(const size_t max_len, const size_t file_cnt) {
 		}
 		CandidatesEnv env(max_len);
 		DistributeTasks <CandidatesEnv, CandidatesTask>(std::cout, env, tasks, FileScanCandidates);
+		std::cout << "Merging thread tallies..." << std::endl;
+		std::map <std::string, size_t> tot_cand;
+		for (const auto &local_cand : env.cand | std::views::values) {
+			for (const auto &[name, freq] : local_cand) {
+				tot_cand[name] += freq;
+			}
+		}
+
 		json::Value cands(json::kArrayType);
-		for (const auto &[name, freq] : env.cand) {
+		for (const auto &[name, freq] : tot_cand) {
 			json::Value cand(json::kObjectType);
 			cand.AddMember("n", json::Value(name.c_str(), alloc), alloc);
 			cand.AddMember("f", freq, alloc);

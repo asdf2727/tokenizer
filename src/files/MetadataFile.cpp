@@ -42,7 +42,7 @@ struct MetadataTask {
 	std::string path;
 };
 
-bool FileScanMetadata(MetadataEnv &env, MetadataTask &task) {
+bool FileScanMetadata(MetadataEnv &env, MetadataTask &task, size_t tid) {
 	const DataFile file(task.path);
 	if (!file.IsValid()) return false;
 	json::Value object(json::kObjectType);
