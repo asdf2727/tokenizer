@@ -81,6 +81,7 @@ bool CandidatesFile::ReadFile () {
 	char buffer[kBuildVersion.size()];
 	fin.read(buffer, kBuildVersion.size());
 	if (kBuildVersion != buffer) return false;
+	if (fin.get() != '\0') return false;
 	size_t entry_cnt;
 	fin.read(reinterpret_cast<char *>(&entry_cnt), sizeof(entry_cnt));
 	while (entry_cnt-- && fin.good()) {
@@ -103,7 +104,7 @@ bool CandidatesFile::ReadFile () {
 }
 void CandidatesFile::WriteFile () {
  	std::ofstream fout(file_path_, std::ios::binary);
-	fout << kBuildVersion;
+	fout << kBuildVersion << '\0';
 	size_t entry_cnt = candidates_.size();
 	fout.write(reinterpret_cast<char *>(&entry_cnt), sizeof(entry_cnt));
 	for (const auto &[name, freq] : candidates_) {
@@ -114,8 +115,7 @@ void CandidatesFile::WriteFile () {
 			if (copy) byte |= 0x80;
 			fout.put(byte);
 		}
-		fout << name;
-		fout.put('\0');
+		fout << name << '\0';
 	}
 }
 

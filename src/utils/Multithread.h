@@ -5,6 +5,8 @@
 #include <thread>
 #include <ostream>
 
+//#define SINGLETHREAD_DEBUG
+
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define VC_EXTRALEAN
@@ -26,8 +28,6 @@ inline void get_terminal_size(uint16_t *width, uint16_t *height) {
 	if (height != nullptr) *height = w.ws_row;
 #endif // Windows/Linux
 }
-
-//#define SINGLETHREAD_DEBUG
 
 template <typename EnvT, typename TaskT>
 void DistributeTasks(std::ostream &out,
@@ -59,16 +59,16 @@ void DistributeTasks(std::ostream &out,
 	for (int tid = 0; tid < thread_cnt; ++tid) {
 		threads.emplace_back([&tasks, &task_mutex, &next_task, &print_mutex, tid, &out, process, &env, &done_tasks, &last_width, &last_len] {
 #endif
-			TaskT &running_task = tasks[0];
+			TaskT *running_task;
 			while (true) {
 				size_t running_index = 0;
 				{
 					std::unique_lock lock(task_mutex);
 					if (next_task == tasks.size()) break;
 					running_index = next_task;
-					running_task = tasks[next_task++];
+					running_task = &tasks[next_task++];
 				}
-				const bool valid = process(env, running_task, tid);
+				const bool valid = process(env, *running_task, tid);
 				{
 					std::unique_lock lock(print_mutex);
 					if (!valid) {

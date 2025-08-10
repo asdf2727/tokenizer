@@ -7,7 +7,7 @@ bool DataFile::Validate() {
 	for (const auto &entry : doc_.GetArray()) {
 		if (!entry.IsObject()) return false;
 		if (!entry.HasMember("id")) return false;
-		if (!entry["title"].IsString()) return false;
+		if (!entry["id"].IsString()) return false;
 		if (!entry.HasMember("text")) return false;
 		if (!entry["text"].IsString()) return false;
 		if (!entry.HasMember("title")) return false;

@@ -41,7 +41,7 @@ struct MetadataTask {
 };
 
 bool FileScanMetadata(MetadataEnv &env, MetadataTask &task, size_t tid) {
-	const DataFile file(task.path);
+	DataFile file(task.path);
 	if (!file.IsValid()) return false;
 	json::Value object(json::kObjectType);
 	object.AddMember("path", json::Value(fs::relative(task.path, env.root_path).c_str(), env.alloc), env.alloc);
