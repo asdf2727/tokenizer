@@ -99,3 +99,11 @@ void DistributeTasks(std::ostream &out,
 #endif
 	out << "\033[0KDone" << std::endl;
 }
+
+class ThreadPool {
+
+public:
+	ThreadPool (size_t thread_cnt = std::thread::hardware_concurrency()) {
+
+	}
+};

@@ -48,7 +48,7 @@ void TokenGenerator::RunStep (const double corr_factor) {
 	const double fill_ratio = (double)(enabled_.size() + delta_enabled) / pref_cand_;
 	const double contrib = tot_cand_ * score_dist_.GetBest((double)(enabled_.size() + delta_enabled) / tot_cand_);
 	const double new_score = new_raw_score / contrib * fill_ratio * (2 - fill_ratio);
-	const double temp = 0.0005 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.5);
+	const double temp = 0.0005 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.4);
 	const double keep_prob = std::exp((new_score - score_) / temp);
 	const bool keep_change = chance_(gen_) < keep_prob;
 
