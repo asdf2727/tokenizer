@@ -2,9 +2,13 @@
 
 #include <iostream>
 
-//#define NO_DISTRIBUTE_DEBUG
-#include "../utils/Multithread.h"
+// #define NO_DISTRIBUTE_DEBUG
+#include <mutex>
+#include <utility>
+
+
 #include "../config.h"
+#include "../utils/Multithread.h"
 
 #include "DataFile.h"
 
@@ -27,31 +31,6 @@ bool MetadataFile::Validate() {
 	return true;
 }
 
-struct MetadataEnv {
-	std::mutex mutex = std::mutex();
-	json::Value file_array = json::Value(json::kArrayType);
-	json::Document::AllocatorType &alloc;
-	fs::path root_path;
-
-	explicit MetadataEnv(json::Document::AllocatorType &alloc, const fs::path &root_path) : alloc(alloc), root_path(root_path) {}
-};
-
-struct MetadataTask {
-	std::string path;
-};
-
-bool FileScanMetadata(MetadataEnv &env, MetadataTask &task, size_t tid) {
-	DataFile file(task.path);
-	if (!file.IsValid()) return false;
-	json::Value object(json::kObjectType);
-	object.AddMember("path", json::Value(fs::relative(task.path, env.root_path).c_str(), env.alloc), env.alloc);
-	{
-		std::unique_lock lock(env.mutex);
-		env.file_array.PushBack(object, env.alloc);
-	}
-	return true;
-}
-
 void MetadataFile::BuildDoc() {
 	std::cout << "Building new metadata file..." << std::endl;
 	modified_ = true;
@@ -59,21 +38,31 @@ void MetadataFile::BuildDoc() {
 	json::Document::AllocatorType& alloc = doc_.GetAllocator();
 	doc_.AddMember("version", json::StringRef(kBuildVersion.c_str()), alloc);
 
+	const fs::path root_path = canonical(fs::path(path_).parent_path());
+
+	std::mutex mutex;
+	json::Value file_array(json::kArrayType);
 	{
-		const fs::path root_path = canonical(fs::path(path_).parent_path());
-		std::vector <MetadataTask> tasks;
-		std::cout << "Searching in " << root_path << "..." << std::endl;
+		ThreadPool pool;
 		for (const auto &file : fs::recursive_directory_iterator(root_path)) {
 			const fs::path &path = file.path();
 			if (!fs::is_regular_file(path)) continue;
 			if (path.extension() != ".json") continue;
-			tasks.emplace_back(path.string());
+
+			pool.Enqueue([this, root_path, &alloc, &mutex, &file_array] {
+				if (DataFile(path_).IsValid()) return false;
+				json::Value object(json::kObjectType);
+				object.AddMember("path", json::Value(fs::relative(path_, root_path).c_str(), alloc), alloc);
+				{
+					std::lock_guard lock(mutex);
+					file_array.PushBack(object, alloc);
+				}
+				return true;
+			});
 		}
-		std::cout << "Found " << tasks.size() << " files." << std::endl;
-		MetadataEnv env(doc_.GetAllocator(), root_path);
-		DistributeTasks <MetadataEnv, MetadataTask> (std::cout, env, tasks, FileScanMetadata);
-		doc_.AddMember("files", env.file_array, alloc);
+		pool.Wait();
 	}
+	doc_.AddMember("files", file_array, alloc);
 
 	std::cout << "New metadata built. Saving..." << std::endl;
 	Save();

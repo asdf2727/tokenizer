@@ -22,5 +22,6 @@ add_executable(tokenizer src/main.cpp
 		src/files/CandidatesFile.cpp
 		src/files/CandidatesFile.h
 		src/config.h
+		src/utils/Multithread.cpp
 )
 target_link_libraries(tokenizer PUBLIC RapidJSON)

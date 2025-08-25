@@ -11,11 +11,11 @@
 const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
 
 int main() {
-	MetadataFile metadata(kDataPath + "/.metadata.json");
+	MetadataFile metadata(kDataPath + "/.metadata.json", true);
 #ifdef RUN_SIM
 	std::vector <std::string> solution;
 	{
-		TokenGenerator generator(CandidatesFile(metadata, 10).GetCandidates(), 1000000);
+		TokenGenerator generator(GetCandidates(metadata, 10), 100000);
 		generator.Generate();
 		solution = generator.GetSolution();
 	}

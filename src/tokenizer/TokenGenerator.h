@@ -4,7 +4,6 @@
 #include <string>
 #include <unordered_map>
 
-#include "../files/CandidatesFile.h"
 #include "LomaxDist.h"
 
 class TokenGenerator {
@@ -16,20 +15,28 @@ class TokenGenerator {
 
 	size_t pref_cand_;
 
-	struct Usage {
+	struct Candidate {
+		const std::string token;
 		size_t uses = 0;
-		Usage *parent = nullptr;
+		Candidate *parent = nullptr;
 		bool enabled = false;
+
+		explicit Candidate(std::string &&name) : token(std::move(name)) {}
 	};
-	std::unordered_map <std::string, Usage> uses_;
+	std::vector <Candidate *> enabled_;
+	std::vector <Candidate *> disabled_;
 
 	size_t tot_cand_ = 0;
-	std::vector <std::string> enabled_;
-	std::vector <std::string> disabled_;
-
-	LomaxDist score_dist_;
 	size_t raw_score_ = 0;
+	LomaxDist score_dist_;
 	double score_ = 0;
+
+	size_t SimulateStep(size_t uses, const Candidate *parent) const;
+	template <bool Enable>
+	void ApplyStep(size_t uses, Candidate *parent);
+
+	template <bool Enable>
+	double CalcScore(size_t delta_raw_score, double corr_factor);
 
 	template <bool Enable>
 	void RunStep(double corr_factor);
@@ -37,7 +44,8 @@ class TokenGenerator {
 	size_t gen_cnt_ = 0;
 
 public:
-	TokenGenerator(const std::unordered_map <std::string, size_t> &cands, size_t pref_token_count);
+	TokenGenerator(std::unordered_map <std::string, size_t> &&cands, size_t pref_token_count);
+	~TokenGenerator();
 
 	void Generate();
 	std::vector <std::string> GetSolution() const;

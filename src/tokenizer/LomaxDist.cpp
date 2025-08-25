@@ -32,6 +32,6 @@ double LomaxDist::GetCDF (const double x) const {
 // The integral of the inverse of the CDF from 1-p to 1
 // Represents the contribution of the best p percent of entries
 double LomaxDist::GetBest (const double p) const {
-	const double temp = 1.0 - 1 / beta_;
+	const double temp = 1.0 - (1 / beta_);
 	return sigma_ * (std::pow(p, temp) / temp - p);
 }
