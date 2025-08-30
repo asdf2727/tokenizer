@@ -29,6 +29,7 @@ ThreadPool::ThreadPool (const size_t size) {
 }
 ThreadPool::~ThreadPool () {
 	stop_ = true;
+	run_once_.notify_all();
 	for (auto &thread : threads_) {
 		thread.join();
 	}

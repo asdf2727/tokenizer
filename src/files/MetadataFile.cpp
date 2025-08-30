@@ -40,19 +40,19 @@ void MetadataFile::BuildDoc() {
 
 	const fs::path root_path = canonical(fs::path(path_).parent_path());
 
-	std::mutex mutex;
 	json::Value file_array(json::kArrayType);
 	{
+		std::mutex mutex;
 		ThreadPool pool;
 		for (const auto &file : fs::recursive_directory_iterator(root_path)) {
-			const fs::path &path = file.path();
+			fs::path path = file.path();
 			if (!fs::is_regular_file(path)) continue;
 			if (path.extension() != ".json") continue;
 
-			pool.Enqueue([this, root_path, &alloc, &mutex, &file_array] {
-				if (DataFile(path_).IsValid()) return false;
+			pool.Enqueue([&root_path, &alloc, path = std::move(path), &mutex, &file_array] {
+				if (!DataFile(path).IsValid()) return false;
 				json::Value object(json::kObjectType);
-				object.AddMember("path", json::Value(fs::relative(path_, root_path).c_str(), alloc), alloc);
+				object.AddMember("path", json::Value(fs::relative(path, root_path).c_str(), alloc), alloc);
 				{
 					std::lock_guard lock(mutex);
 					file_array.PushBack(object, alloc);
@@ -62,10 +62,11 @@ void MetadataFile::BuildDoc() {
 		}
 		pool.Wait();
 	}
+	std::cout << "Found " << file_array.Size() << " valid files. Saving..." << std::endl;
 	doc_.AddMember("files", file_array, alloc);
 
-	std::cout << "New metadata built. Saving..." << std::endl;
 	Save();
+	std::cout << "New metadata built." << std::endl;
 }
 
 MetadataFile::MetadataFile(const std::string &path, const bool rebuild):

@@ -26,9 +26,9 @@ public:
 
 	template<class F, class... Args>
 	auto Enqueue(F&& f, Args&&... args) {
-		using ReturnT = std::result_of<F(Args...)>::type;
+		using ReturnT = std::invoke_result<F, Args...>::type;
 
-		auto *task = new std::packaged_task<ReturnT>(
+		auto task = std::make_shared<std::packaged_task<ReturnT()>>(
 			std::bind(std::forward<F>(f), std::forward<Args>(args)...));
 		std::future<ReturnT> future = task->get_future();
 
@@ -37,7 +37,6 @@ public:
 			std::lock_guard lock(queue_mutex_);
 			queue_.emplace([this, task] {
 				(*task)();
-				delete task;
 				if (--queue_size_ == 0) empty_queue_.notify_all();
 			});
 		}

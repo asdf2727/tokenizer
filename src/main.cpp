@@ -11,7 +11,7 @@
 const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
 
 int main() {
-	MetadataFile metadata(kDataPath + "/.metadata.json", true);
+	MetadataFile metadata(kDataPath + "/.metadata.json");
 #ifdef RUN_SIM
 	std::vector <std::string> solution;
 	{

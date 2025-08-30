@@ -1,52 +1,73 @@
 #pragma once
 
+#include <atomic>
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "LomaxDist.h"
 
 class TokenGenerator {
-	double temp_sum_ = 0;
+	size_t debug_ = 0;
 
 	std::random_device rd_;
 	std::mt19937 gen_ = std::mt19937(rd_());
 	std::uniform_real_distribution<> chance_ = std::uniform_real_distribution<>(0, 1);
 
-	size_t pref_cand_;
-
 	struct Candidate {
 		const std::string token;
-		size_t uses = 0;
+		const size_t tot_uses;
+		std::atomic <size_t> uses;
 		Candidate *parent = nullptr;
-		bool enabled = false;
+		std::atomic <bool> enabled = false;
 
-		explicit Candidate(std::string &&name) : token(std::move(name)) {}
+		explicit Candidate(std::string name, const size_t tot_uses) :
+			token(std::move(name)),
+			tot_uses(tot_uses),
+			uses(tot_uses) {}
+
+		[[nodiscard]] size_t SimulateStep() const;
+		template <bool Enable>
+		[[nodiscard]] size_t ApplyStep();
 	};
+
+	size_t tot_cand_;
+	size_t pref_cand_;
+
+	std::mutex enabled_mutex_;
+	std::mutex disabled_mutex_;
+
+	std::vector <Candidate *> roots_;
 	std::vector <Candidate *> enabled_;
 	std::vector <Candidate *> disabled_;
 
-	size_t tot_cand_ = 0;
+	std::mutex score_mutex_;
+	size_t enabled_cnt_ = 0;
 	size_t raw_score_ = 0;
-	LomaxDist score_dist_;
 	double score_ = 0;
 
-	size_t SimulateStep(size_t uses, const Candidate *parent) const;
-	template <bool Enable>
-	void ApplyStep(size_t uses, Candidate *parent);
+	LomaxDist score_dist_;
+	std::atomic <double> temp_;
+
+	std::atomic <size_t> gen_cnt_ = 0;
+
+	bool WillDisable(double &corr_factor);
 
 	template <bool Enable>
-	double CalcScore(size_t delta_raw_score, double corr_factor);
+	Candidate *RandCandidate ();
+
+	[[nodiscard]] inline double CalcScore(size_t raw_score, size_t enabled_cnt) const;
 
 	template <bool Enable>
-	void RunStep(double corr_factor);
+	void TryAndStep(double corr_factor);
 
-	size_t gen_cnt_ = 0;
+	void RunStep();
 
 public:
 	TokenGenerator(std::unordered_map <std::string, size_t> &&cands, size_t pref_token_count);
 	~TokenGenerator();
 
 	void Generate();
-	std::vector <std::string> GetSolution() const;
+	[[nodiscard]] std::vector <std::string> GetSolution() const;
 };

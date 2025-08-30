@@ -2,21 +2,22 @@
 
 #include <cmath>
 
-void LomaxDist::SetHalfLife(const double halflife) {
-	alpha_ = std::log(2) / halflife;
+void LomaxDist::SetHalfLife(const double half_life) {
+	alpha_ = std::log(2) / half_life;
 }
 
-void LomaxDist::AddPoint (double val, const double weight) {
-	moment1_ += (val - moment1_) * alpha_ * weight;
+void LomaxDist::AddPoint (double val, double weight) {
+	weight *= alpha_;
+	std::lock_guard lock(moment_mutex_);
+	moment1_ += (val - moment1_) * weight;
 	val *= val;
-	moment2_ += (val - moment2_) * alpha_ * weight;
-}
+	moment2_ += (val - moment2_) * weight;
 
-void LomaxDist::UpdateParams () {
 	const double temp = moment2_ / (moment2_ - 2 * moment1_ * moment1_);
 	sigma_ = moment1_ * temp;
 	beta_ = temp + 1;
 }
+
 void LomaxDist::GetParams (double *beta, double *sigma) const {
 	if (beta != nullptr) *beta = beta_;
 	if (sigma != nullptr) *sigma = sigma_;

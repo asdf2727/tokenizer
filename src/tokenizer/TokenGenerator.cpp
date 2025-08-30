@@ -4,29 +4,41 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <ranges>
 
-TokenGenerator::TokenGenerator(std::unordered_map <std::string, size_t> &&cands, const size_t pref_token_count):
+TokenGenerator::TokenGenerator(std::unordered_map<std::string, size_t> &&cands, const size_t pref_token_count) :
 	pref_cand_(pref_token_count) {
-	char temp[2] = {'\0', '\0'};
-	for (int i = 0; i < 256; i++) {
-		temp[0] = i;
-		uses_[temp].enabled = true;
+	std::string str(1, '\0');
+	for (int i = 0; i < UINT8_MAX; i++) {
+		str[0] = (char)i;
+		if (cands.contains(str)) continue;
+		cands[str] = 0;
 	}
-	for (const auto &[token, freq] : cands) {
-		uses_[token].uses = freq;
-		if (token.size() == 1) continue;
-		disabled_.emplace_back(token);
-		tot_cand_++;
+	tot_cand_ = cands.size();
+	std::cout << "Initializing optimizer with " << tot_cand_ << " candidates..." << std::endl;
+	std::unordered_map<std::string, Candidate*> candidates;
+	for (auto &[token, freq] : cands) {
+		candidates[token] = new Candidate(token, freq);
 	}
-	score_dist_.SetHalfLife((double)tot_cand_ / 4);
-	for (auto &[token, usage] : uses_) {
-		if (token.size() == 1) continue;
-		score_dist_.AddPoint(usage.uses * (token.size() - 1), 1);
-		usage.parent = &uses_[token.substr(0, token.size() - 1)];
+
+	std::cout << "Computing parents..." << std::endl;
+	score_dist_.SetHalfLife((double)tot_cand_ * 0.25);
+	for (auto *cand : candidates | std::views::values) {
+		if (cand->token.size() == 1) {
+			cand->enabled = true;
+			roots_.push_back(cand);
+		}
+		else {
+			disabled_.push_back(cand);
+			score_dist_.AddPoint(cand->uses * (cand->token.size() - 1), 1);
+			cand->parent = candidates[cand->token.substr(0, cand->token.size() - 1)];
+		}
 	}
-	score_dist_.SetHalfLife((double)tot_cand_);
+	// TODO add best candidates as initial solution
+	score_dist_.SetHalfLife((double)tot_cand_ * 0.5);
 }
+
 TokenGenerator::~TokenGenerator() {
 	for (const Candidate *cand : enabled_) {
 		delete cand;
@@ -34,139 +46,138 @@ TokenGenerator::~TokenGenerator() {
 	for (const Candidate *cand : disabled_) {
 		delete cand;
 	}
+	for (const Candidate *cand : roots_) {
+		delete cand;
+	}
 }
 
 
-size_t TokenGenerator::SimulateStep(const size_t uses, const Candidate *parent) const {
+size_t TokenGenerator::Candidate::SimulateStep() const {
 	size_t delta_len = 1;
 	for (const Candidate *par = parent; !par->enabled; par = par->parent) delta_len++;
 	return uses * delta_len;
 }
+
 template <bool Enable>
-void TokenGenerator::ApplyStep(const std::string *cand, Candidate &usage) {
-	// TODO usage mutex here
-	for (Candidate *par = usage.parent; par != nullptr; par = par->parent) {
-		Enable ? par->uses -= usage.uses : par->uses += usage.uses;
-		Enable ? raw_score_ += usage.uses : raw_score_ -= usage.uses;
-		if (par->enabled) break;
+size_t TokenGenerator::Candidate::ApplyStep() {
+	size_t delta_len = 1;
+	Candidate *node;
+	for (node = parent; !node->enabled; node = node->parent) {
+		node->uses -= (Enable ? 1 : -1) * uses;
+		delta_len++;
 	}
+	node->uses -= (Enable ? 1 : -1) * uses;
+	enabled = Enable;
+	return delta_len * uses;
+}
+
+bool TokenGenerator::WillDisable(double &corr_factor) {
+	// Calculate the chance of enabling a candidate, based on x (current enabled cnt) and P (preferred enabled cnt)
+	// The formula is P(x) = x / [x + (n-x) * p/(n-p)], but I rearranged it to remove floating point arithmetic
+	// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
+	const size_t enabled_weight = enabled_.size() * (tot_cand_ - pref_cand_);
+	const size_t total_weight = enabled_weight + disabled_.size() * pref_cand_;
+	const bool swap_enabled = std::uniform_int_distribution<size_t>(0, total_weight - 1)(gen_) < enabled_weight;
+	corr_factor = (double)total_weight / (tot_cand_ * (swap_enabled ? tot_cand_ - pref_cand_ : pref_cand_));
+	return swap_enabled;
 }
 
 template <bool Enable>
-double TokenGenerator::CalcScore(const size_t raw_score) const {
-	const double new_enabled_cnt = enabled_.size() + (Enable ? 1 : -1);
-	const double contrib = tot_cand_ * score_dist_.GetBest(new_enabled_cnt / tot_cand_);
-	const double new_pref_fill = new_enabled_cnt / pref_cand_;
-	return raw_score / contrib * new_pref_fill * (2 - new_pref_fill);
+TokenGenerator::Candidate* TokenGenerator::RandCandidate() {
+	std::vector<Candidate*> &from = Enable ? disabled_ : enabled_;
+	std::lock_guard lock(Enable ? disabled_mutex_ : enabled_mutex_);
+	// TODO try to use chance_ to avoid new generator
+	const size_t rand_pos = std::uniform_int_distribution<size_t>(0, from.size() - 1)(gen_);
+	std::swap(from[rand_pos], from.back());
+	Candidate *cand = from.back();
+	from.pop_back();
+	return cand;
+}
+
+inline double TokenGenerator::CalcScore(const size_t raw_score, const size_t enabled_cnt) const {
+	const double contrib = tot_cand_ * score_dist_.GetBest((double)enabled_cnt / tot_cand_);
+	const double new_pref_fill = (double)enabled_cnt / pref_cand_;
+	return (double)raw_score / contrib * new_pref_fill * (2 - new_pref_fill);
 }
 
 template <bool Enable>
-void TokenGenerator::RunStep (const double corr_factor) {
-	std::vector <const std::string*> &from = Enable ? disabled_ : enabled_;
-	std::vector <const std::string*> &to = Enable ? enabled_ : disabled_;
+void TokenGenerator::TryAndStep(const double corr_factor) {
+	// Extract random candidate
+	Candidate *cand = RandCandidate<Enable>();
 
-	// Choose candidate
-	const size_t cand_index = std::uniform_int_distribution <size_t> (0, from.size() - 1)(gen_);
-	const std::string* cand;
-	{
-		// TODO from mutex here
-		std::swap(from[cand_index], from.back());
-		cand = from.back();
-		from.pop_back();
-	}
-
-	// Get usage
-	const auto [uses, parent, enabled] = uses_[*cand];
+	std::unique_lock s_lock(score_mutex_);
+	const size_t loc_enabled_cnt = enabled_cnt_;
+	const size_t loc_raw_score = raw_score_;
+	const double loc_score = score_; // TODO see if it's faster to recompute score_ every time
+	s_lock.unlock();
 
 	// Simulate switching
-	const size_t delta_raw_score = SimulateStep(uses, parent);
-	const size_t new_raw_score = Enable ? raw_score_ + delta_raw_score : raw_score_ - delta_raw_score;
-	const double new_score = CalcScore<Enable>(new_raw_score, corr_factor);
-
-	// Add to score distribution
-	{
-		// TODO add score mutex here???
-		// TODO Warning: estimation assumes weight << 1; do more meth to figure out the exact formula
-		score_dist_.AddPoint(delta_raw_score, corr_factor);
-		score_dist_.UpdateParams();
-	}
+	const size_t delta_raw_score = cand->SimulateStep();
+	const double new_score = CalcScore(loc_raw_score + (Enable ? delta_raw_score : -delta_raw_score),
+	                                   loc_enabled_cnt + (Enable ? 1 : -1));
+	// TODO Warning: estimation assumes weight << 1; do more meth to figure out the exact formula
+	score_dist_.AddPoint(delta_raw_score, corr_factor);
 
 	// Choose whether to keep change
-	const double temp = 0.0005 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.4);
-	const bool keep_change = new_score > score_ || chance_(gen_) < std::exp((new_score - score_) / temp);
-	if (keep_change) {
-		ApplyStep <Enable>(uses, parent);
-		enabled = Enable;
-	}
-	if (usage.enabled) {
-		// TODO disabled mutex here
-		disabled_.push_back(cand);
-	}
-	else {
-		// TODO enabled mutex here
-		enabled_.push_back(cand);
+	temp_ = 0.001 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.3);
+	// TODO try move with probability k (default annealing or k / 1+k (correct Boltzmann dist)
+	if (chance_(gen_) > 1 / (1 + std::exp((new_score - loc_score) / temp_))) {
+		s_lock.lock();
+		raw_score_ += Enable ? cand->ApplyStep<true>() : -cand->ApplyStep<false>();
+		enabled_cnt_ += Enable ? 1 : -1;
+		score_ = CalcScore(raw_score_, enabled_cnt_);
+		s_lock.unlock();
 	}
 
-	if (gen_cnt_ % tot_cand_ == 0) {
-		double beta, sigma;
-		score_dist_.GetParams(&beta, &sigma);
-		std::cout << gen_cnt_ << "\t\t" << score_ << '\n';
-		std::cout << '\t' << temp << "\t\t" << enabled_.size() << '\n';
-		//std::cout << '\t' << beta << "\t\t" << sigma << '\n';
-		std::cout.flush();
+	// Add back the candidate to the correct pool
+	if (cand->enabled) {
+		std::lock_guard lock(enabled_mutex_);
+		enabled_.push_back(cand);
 	}
+	else {
+		std::lock_guard lock(disabled_mutex_);
+		disabled_.push_back(cand);
+	}
+}
+
+void TokenGenerator::RunStep() {
+	double corr_factor;
+	const bool disable = WillDisable(corr_factor);
+	disable ? TryAndStep<false>(corr_factor) : TryAndStep<true>(corr_factor);
+	++gen_cnt_;
 }
 
 void TokenGenerator::Generate() {
 	size_t steps = 30 * tot_cand_;
 	std::cout << "Running simulated annealing for " << steps << " steps" << std::endl;
 	while (steps--) {
-		// Calculate the chance of enabling a candidate, based on x (current enabled cnt) and P (preferred enabled cnt)
-		// The formula is P(x) = x / [x + (n-x) * p/(n-p)], but I rearranged it to remove floating point arithmetic
-		// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
-		const size_t enabled_weight = enabled_.size() * (tot_cand_ - pref_cand_);
-		const size_t total_weight = enabled_.size() * (tot_cand_ - pref_cand_) + disabled_.size() * pref_cand_;
-		const bool hit_enabled = std::uniform_int_distribution <size_t> (0, total_weight - 1)(gen_) < enabled_weight;
-		const double avg_weight = (double)total_weight / tot_cand_;
-		if (hit_enabled) {
-			RunStep <false> (avg_weight / (tot_cand_ - pref_cand_));
+		RunStep();
+		if ((gen_cnt_ + 1) % tot_cand_ == 0) {
+			std::cout << gen_cnt_ << "\t\t" << score_ << "\t\t";
+			std::cout << temp_ << "\t\t" << enabled_.size() << "\t\t" << debug_;
+			debug_ = 0;
+			std::cout << std::endl;
 		}
-		else {
-			RunStep <true> (avg_weight / pref_cand_);
-		}
-		gen_cnt_++;
 	}
 }
 
-std::vector <std::string> TokenGenerator::GetSolution() const {
-	std::vector <std::pair <size_t, std::string>> to_sort;
-	to_sort.reserve(enabled_.size() + 256);
-	for (const std::string &str : enabled_) {
-		auto it = uses_.find(str);
-		if (it == uses_.end()) throw std::runtime_error("Can't find uses for " + str);
-		const auto &[uses, parent, enabled] = it->second;
-
-		size_t delta_len = 1;
-		for (const Candidate *par = parent; !par->enabled; par = par->parent) delta_len++;
-		to_sort.emplace_back(delta_len * uses, str);
-	}
-	char temp[2] = {'\0', '\0'};
-	for (int i = 0; i < 256; i++) {
-		temp[0] = i;
-		auto it = uses_.find(temp);
-		to_sort.emplace_back(it == uses_.end() ? 0 : it->second.uses, temp);
+std::vector<std::string> TokenGenerator::GetSolution() const {
+	std::vector<std::pair<size_t, const std::string*>> to_sort;
+	to_sort.reserve(enabled_.size());
+	for (const Candidate *cand : enabled_) {
+		to_sort.emplace_back(cand->SimulateStep(), &cand->token);
 	}
 	std::ranges::sort(to_sort, [](const auto &x, const auto &y) {
-		return x.first == y.first ? x.second < y.second : x.first > y.first;
+		return x.first == y.first ? *x.second < *y.second : x.first > y.first;
 	});
 
-	std::vector <std::string> solution;
-	std::ofstream fout("temp.txt");
-	solution.reserve(to_sort.size());
-	for (const auto &[score, token] : to_sort) {
-		fout << token << ' ' << score << '\n';
-		solution.push_back(token);
+	std::vector<std::string> solution;
+	solution.reserve(to_sort.size() + roots_.size());
+	for (const auto *token : to_sort | std::views::values) {
+		solution.emplace_back(*token);
 	}
-	fout.flush();
+	for (const auto *cand : roots_) {
+		solution.emplace_back(cand->token);
+	}
 	return solution;
 }
