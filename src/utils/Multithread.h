@@ -7,6 +7,8 @@
 #include <queue>
 #include <thread>
 
+//#define SINGLETHREAD_DEBUG
+
 class ThreadPool {
 	std::vector <std::thread> threads_;
 	std::condition_variable run_once_;
@@ -32,6 +34,9 @@ public:
 			std::bind(std::forward<F>(f), std::forward<Args>(args)...));
 		std::future<ReturnT> future = task->get_future();
 
+#ifdef SINGLETHREAD_DEBUG
+		(*task)();
+#else
 		++queue_size_;
 		{
 			std::lock_guard lock(queue_mutex_);
@@ -41,6 +46,7 @@ public:
 			});
 		}
 		run_once_.notify_one();
+#endif
 
 		return future;
 	}
