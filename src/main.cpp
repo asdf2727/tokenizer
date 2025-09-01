@@ -8,8 +8,7 @@
 
 #define RUN_SIM
 
-//const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
-const std::string kDataPath = "../../Input Data/Raw Text/test";
+const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
 
 int main() {
 	MetadataFile metadata(kDataPath + "/.metadata.json");
@@ -25,7 +24,7 @@ int main() {
 	TokenFile tkn(kDataPath + "/.tokens.json");
 #endif
 
-	/*std::string test_file = metadata.GetFiles().back().path;
+	std::string test_file = metadata.GetFiles().back().path;
 	std::cout << "Benchmark on file " << test_file << std::endl;
 	size_t init_size = 0;
 	size_t comp_size = 0;
@@ -44,5 +43,5 @@ int main() {
 		std::vector <size_t> ids = tkn.Tokenize(str);
 		std::cout << tkn.Prettify(ids) << '\n';
 		std::cout << "Compression factor " << (double)str.size() / (ids.size() - 2) << '\n';
-	}*/
+	}
 }

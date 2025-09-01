@@ -54,7 +54,7 @@ class TokenGenerator {
 	size_t TryAndStep(Candidate *cand);
 
 	template <bool Enable>
-	std::vector <Candidate *>  RunBatch(size_t work_cnt, double corr_factor);
+	std::vector <Candidate *>  RunBatch(size_t work_cnt, int64_t *samples);
 
 	void WorkerTask();
 

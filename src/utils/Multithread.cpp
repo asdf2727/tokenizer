@@ -6,7 +6,7 @@
 #include <queue>
 #include <thread>
 
-#define SINGLETHREAD_DEBUG
+//#define SINGLETHREAD_DEBUG
 
 void ThreadPool::ThreadRoutine() {
 	while (!stop_) {
