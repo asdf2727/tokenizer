@@ -7,8 +7,6 @@
 #include <queue>
 #include <thread>
 
-//#define SINGLETHREAD_DEBUG
-
 class ThreadPool {
 	std::vector <std::thread> threads_;
 	std::condition_variable run_once_;
@@ -26,7 +24,9 @@ public:
 	explicit ThreadPool (size_t size = std::thread::hardware_concurrency());
 	~ThreadPool ();
 
-	template<class F, class... Args>
+	void Enqueue(std::function <void()> &&func);
+
+	/*template<class F, class... Args>
 	auto Enqueue(F&& f, Args&&... args) {
 		using ReturnT = std::invoke_result<F, Args...>::type;
 
@@ -34,22 +34,10 @@ public:
 			std::bind(std::forward<F>(f), std::forward<Args>(args)...));
 		std::future<ReturnT> future = task->get_future();
 
-#ifdef SINGLETHREAD_DEBUG
-		(*task)();
-#else
-		++queue_size_;
-		{
-			std::lock_guard lock(queue_mutex_);
-			queue_.emplace([this, task] {
-				(*task)();
-				if (--queue_size_ == 0) empty_queue_.notify_all();
-			});
-		}
-		run_once_.notify_one();
-#endif
+		Enqueue([task] { (*task)(); });
 
 		return future;
-	}
+	}*/
 
 	void Wait();
 };

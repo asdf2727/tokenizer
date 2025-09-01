@@ -6,12 +6,14 @@
 #include <queue>
 #include <thread>
 
+#define SINGLETHREAD_DEBUG
+
 void ThreadPool::ThreadRoutine() {
 	while (!stop_) {
 		std::function<void()> task;
 		{
 			std::unique_lock lock(queue_mutex_);
-			run_once_.wait(lock, [&] {
+			if (queue_.empty() && !stop_) run_once_.wait(lock, [&] {
 				return !queue_.empty() || stop_;
 			});
 			if (stop_) return;
@@ -19,6 +21,7 @@ void ThreadPool::ThreadRoutine() {
 			queue_.pop();
 		}
 		task();
+		if (--queue_size_ == 0) empty_queue_.notify_all();
 	}
 }
 
@@ -33,6 +36,19 @@ ThreadPool::~ThreadPool () {
 	for (auto &thread : threads_) {
 		thread.join();
 	}
+}
+
+void ThreadPool::Enqueue(std::function <void()> &&func) {
+#ifdef SINGLETHREAD_DEBUG
+	func();
+#else
+	++queue_size_;
+	{
+		std::lock_guard lock(queue_mutex_);
+		queue_.push(std::move(func));
+	}
+	run_once_.notify_one();
+#endif
 }
 
 void ThreadPool::Wait() {

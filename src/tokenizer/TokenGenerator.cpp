@@ -83,26 +83,15 @@ thread_local std::mt19937 gen(rd());
 thread_local std::uniform_real_distribution<> chance(0, 1);
 
 std::pair <bool, double> TokenGenerator::WillDisable() const {
-	// Calculate the chance of enabling a candidate, based on x (current enabled cnt) and P (preferred enabled cnt)
-	// The formula is P(x) = x / [x + (n-x) * p/(n-p)], but I rearranged it to remove floating point arithmetic
-	// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
-	const uint64_t enabled_weight = enabled_.size() * (tot_cand_ - pref_cand_);
-	const uint64_t total_weight = enabled_weight + disabled_.size() * pref_cand_;
-	const bool swap_enabled = std::uniform_int_distribution<size_t>(0, total_weight - 1)(gen) < enabled_weight;
-	const double corr_factor = (double)total_weight / (tot_cand_ * (swap_enabled ? tot_cand_ - pref_cand_ : pref_cand_));
-	return {swap_enabled, corr_factor};
 }
 
-template <bool Enable>
-TokenGenerator::Candidate* TokenGenerator::RandCandidate() {
-	std::vector<Candidate*> &from = Enable ? disabled_ : enabled_;
-	std::lock_guard lock(Enable ? disabled_mutex_ : enabled_mutex_);
+TokenGenerator::Candidate *TokenGenerator::RandCandidate(std::vector<Candidate*> &from) {
 	// TODO try to use chance_ to avoid new generator
 	const size_t rand_pos = std::uniform_int_distribution<size_t>(0, from.size() - 1)(gen);
 	std::swap(from[rand_pos], from.back());
-	Candidate *cand = from.back();
+	Candidate *ret = from.back();
 	from.pop_back();
-	return cand;
+	return ret;
 }
 
 inline double TokenGenerator::CalcScore(const size_t raw_score, const size_t enabled_cnt) const {
@@ -113,10 +102,7 @@ inline double TokenGenerator::CalcScore(const size_t raw_score, const size_t ena
 }
 
 template <bool Enable>
-size_t TokenGenerator::TryAndStep() {
-	// Extract random candidate
-	Candidate *cand = RandCandidate<Enable>();
-
+size_t TokenGenerator::TryAndStep(Candidate *cand) {
 	const size_t loc_enabled_cnt = enabled_cnt_;
 	const uint64_t loc_raw_score = raw_score_;
 	// TODO see if it's faster to recompute loc_score every time or read it from shared memory
@@ -150,8 +136,24 @@ size_t TokenGenerator::TryAndStep() {
 	return delta_raw_score;
 }
 
+constexpr size_t kBatchSize = 10;
+
 void TokenGenerator::RunStep() {
+	// Calculate the chance of enabling a candidate, based on x (current enabled cnt) and P (preferred enabled cnt)
+	// The formula is P(x) = x / [x + (n-x) * p/(n-p)], but I rearranged it to remove floating point arithmetic
+	// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
+	const uint64_t enabled_weight = enabled_cnt_ * (tot_cand_ - pref_cand_);
+	const uint64_t disabled_weight = (tot_cand_ - enabled_cnt_) * pref_cand_;
+	const uint64_t total_weight = enabled_weight + disabled_weight;
+	const double corr_enable = (double)total_weight / (tot_cand_ * (tot_cand_ - pref_cand_));
+	const double corr_disable = (double)total_weight / (tot_cand_ * pref_cand_);
+	const size_t enabled_cnt = std::binomial_distribution(kBatchSize, (double)disabled_weight / total_weight)(gen);
+
+
+
 	const auto [disable, corr_factor] = WillDisable();
+	// Extract random candidate
+	Candidate *cand = disable ? RandCandidate<false>() : RandCandidate<true>();
 	// TODO Warning: estimation assumes weight << 1; do more meth to figure out the exact formula
 	score_dist_.AddPoint(disable ? TryAndStep<false>() : TryAndStep<true>(), corr_factor);
 	++gen_cnt_;

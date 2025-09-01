@@ -31,6 +31,11 @@ class TokenGenerator {
 		[[nodiscard]] int64_t ApplyStep();
 	};
 
+	struct WorkingCandidate {
+		Candidate *cand;
+		int64_t delta_score;
+	};
+
 	std::mutex enabled_mutex_;
 	std::mutex disabled_mutex_;
 
