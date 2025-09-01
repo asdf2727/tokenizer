@@ -31,38 +31,32 @@ class TokenGenerator {
 		[[nodiscard]] int64_t ApplyStep();
 	};
 
-	struct WorkingCandidate {
-		Candidate *cand;
-		int64_t delta_score;
-	};
-
-	std::mutex enabled_mutex_;
-	std::mutex disabled_mutex_;
-
 	std::vector <Candidate *> roots_;
+	std::mutex enabled_mutex_;
 	std::vector <Candidate *> enabled_;
+	std::mutex disabled_mutex_;
 	std::vector <Candidate *> disabled_;
 
 	std::atomic <size_t> enabled_cnt_ = 0;
 	std::atomic <uint64_t> raw_score_ = 0;
-
-	LomaxDist score_dist_;
 	std::atomic <double> temp_;
 
+	std::mutex dist_mutex_;
+	LomaxDist score_dist_;
+
 	std::atomic <size_t> gen_cnt_ = 0;
-	std::atomic <size_t> debug_ = 0;
 
-	[[nodiscard]] std::pair <bool, double>  WillDisable() const;
-
-	template <bool Enable>
-	Candidate *RandCandidate ();
+	static Candidate* RandCandidate(std::vector<Candidate *> &from);
 
 	[[nodiscard]] inline double CalcScore(size_t raw_score, size_t enabled_cnt) const;
 
 	template <bool Enable>
-	size_t TryAndStep();
+	size_t TryAndStep(Candidate *cand);
 
-	void RunStep();
+	template <bool Enable>
+	std::vector <Candidate *>  RunBatch(size_t work_cnt, double corr_factor);
+
+	void WorkerTask();
 
 public:
 	TokenGenerator(std::unordered_map <std::string, size_t> &&cands, size_t pref_token_count);

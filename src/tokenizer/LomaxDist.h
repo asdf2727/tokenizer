@@ -14,8 +14,12 @@ class LomaxDist {
 public:
 	void SetHalfLife (double half_life);
 	void AddPoint (double val, double weight);
+	void UpdateParams();
 
 	void GetParams (double *beta, double *sigma) const;
+
+	[[nodiscard]] double GetMean() const;
+	[[nodiscard]] double GetVar() const;
 
 	[[nodiscard]] double GetPDF (double x) const;
 	[[nodiscard]] double GetCDF (double x) const;

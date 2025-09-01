@@ -8,6 +8,7 @@
 
 #define RUN_SIM
 
+//const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
 const std::string kDataPath = "../../Input Data/Raw Text/test";
 
 int main() {
@@ -15,7 +16,7 @@ int main() {
 #ifdef RUN_SIM
 	std::vector <std::string> solution;
 	{
-		TokenGenerator generator(GetCandidates(metadata, 10), 100000);
+		TokenGenerator generator(GetCandidates(metadata, 10), 30000);
 		generator.Generate();
 		solution = generator.GetSolution();
 	}
