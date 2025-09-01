@@ -9,8 +9,11 @@
 
 #include "../utils/Multithread.h"
 
-TokenGenerator::TokenGenerator(std::unordered_map<std::string, size_t> &&cands, const size_t pref_token_count) :
-	pref_cand_(pref_token_count) {
+TokenGenerator::TokenGenerator(std::unordered_map<std::string, size_t> &&cands,
+                               const size_t pref_token_count,
+                               const size_t batch_size) :
+	pref_cand_(pref_token_count),
+	batch_size_(batch_size) {
 	std::string str(1, '\0');
 	for (int i = 0; i < UINT8_MAX; i++) {
 		str[0] = (char)i;
@@ -100,32 +103,6 @@ inline double TokenGenerator::CalcScore(const size_t raw_score, const size_t ena
 }
 
 template <bool Enable>
-size_t TokenGenerator::TryAndStep(Candidate *cand) {
-
-	const size_t loc_enabled_cnt = enabled_cnt_;
-	const size_t loc_raw_score = raw_score_;
-	const double loc_score = CalcScore(loc_raw_score, loc_enabled_cnt);
-
-	const int64_t delta_raw_score = cand->SimulateStep();
-	const double new_score = CalcScore(loc_raw_score + (Enable ? delta_raw_score : -delta_raw_score),
-	                                   loc_enabled_cnt + (Enable ? 1 : -1));
-
-	// TODO try move with probability k (default annealing) or k / 1+k (correct Boltzmann dist)
-	//const bool do_step = new_score > loc_score || chance(gen) < std::exp((new_score - loc_score) / temp_);
-	const bool do_step = chance(gen) > 1 / (1 + std::exp((new_score - loc_score) / temp_));
-
-	// TODO consider updating delta_score with actual ApplyStep
-	if (do_step) {
-		raw_score_ += Enable ? cand->ApplyStep<true>() : -cand->ApplyStep<false>();
-		enabled_cnt_ += Enable ? 1 : -1;
-	}
-
-	return delta_raw_score;
-}
-
-constexpr size_t kBatchSize = 20;
-
-template <bool Enable>
 std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t work_cnt, int64_t *samples) {
 	std::vector<Candidate*> working;
 	{
@@ -135,15 +112,34 @@ std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t wo
 		}
 	}
 
+
 	for (Candidate *cand : working) {
-		*samples++ = TryAndStep<Enable>(cand);
+		// TODO find out what causes a drop of quality when pulling these 3 lines out
+		const size_t loc_enabled_cnt = enabled_cnt_;
+		const size_t loc_raw_score = raw_score_;
+		const double loc_score = CalcScore(loc_raw_score, loc_enabled_cnt);
+
+		const int64_t delta_raw_score = cand->SimulateStep();
+		const double new_score = CalcScore(loc_raw_score + (Enable ? delta_raw_score : -delta_raw_score),
+		                                   loc_enabled_cnt + (Enable ? 1 : -1));
+
+		// TODO try move with probability k (default annealing) or k / 1+k (correct Boltzmann dist)
+		//const bool do_step = new_score > loc_score || chance(gen) < std::exp((new_score - loc_score) / temp_);
+		const bool do_step = chance(gen) > 1 / (1 + std::exp((new_score - loc_score) / temp_));
+
+		// TODO consider updating delta_score with actual ApplyStep
+		if (do_step) {
+			raw_score_ += Enable ? cand->ApplyStep<true>() : -cand->ApplyStep<false>();
+			enabled_cnt_ += Enable ? 1 : -1;
+		}
+
+		*samples++ = delta_raw_score;
 	}
 
 	return working;
 }
 
 void TokenGenerator::WorkerTask() {
-
 	// Calculate the chance of enabling a candidate, based on x (current enabled cnt) and P (preferred enabled cnt)
 	// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
 	const uint64_t enabled_weight = enabled_cnt_ * (tot_cand_ - pref_cand_);
@@ -151,22 +147,25 @@ void TokenGenerator::WorkerTask() {
 	const uint64_t total_weight = enabled_weight + disabled_weight;
 	const double corr_enable = (double)total_weight / (tot_cand_ * pref_cand_);
 	const double corr_disable = (double)total_weight / (tot_cand_ * (tot_cand_ - pref_cand_));
-	const size_t enable_cnt = std::binomial_distribution(kBatchSize, (double)disabled_weight / total_weight)(gen);
+	const size_t enable_cnt = std::binomial_distribution(batch_size_, (double)disabled_weight / total_weight)(gen);
 
-	temp_ = 0.0005 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.4);
+	//temp_ = 0.0005 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.4);
+	temp_ = 1e-20;
 
 	std::vector<Candidate*> enabled;
 	std::vector<Candidate*> disabled;
-	int64_t samples[kBatchSize];
-	if (enable_cnt > 0) for (Candidate *cand : RunBatch<true>(enable_cnt, samples)) {
-		if (cand->enabled) enabled.push_back(cand);
-		else disabled.push_back(cand);
-	}
-	if (enable_cnt < kBatchSize) for (Candidate *cand : RunBatch<false>(kBatchSize - enable_cnt, samples + enable_cnt)) {
-		if (cand->enabled) enabled.push_back(cand);
-		else disabled.push_back(cand);
-	}
-	//enabled_cnt_ += enabled.size() - (kBatchSize - enable_cnt);
+	int64_t samples[batch_size_];
+	if (enable_cnt > 0)
+		for (Candidate *cand : RunBatch<true>(enable_cnt, samples)) {
+			if (cand->enabled) enabled.push_back(cand);
+			else disabled.push_back(cand);
+		}
+	if (enable_cnt < batch_size_)
+		for (Candidate *cand : RunBatch<false>(batch_size_ - enable_cnt, samples + enable_cnt)) {
+			if (cand->enabled) enabled.push_back(cand);
+			else disabled.push_back(cand);
+		}
+	//enabled_cnt_ += enabled.size() - (batch_size_ - enable_cnt);
 
 	{
 		size_t i = 0;
@@ -174,7 +173,7 @@ void TokenGenerator::WorkerTask() {
 		while (i < enable_cnt) {
 			score_dist_.AddPoint(samples[i++], corr_enable);
 		}
-		while (i < kBatchSize) {
+		while (i < batch_size_) {
 			score_dist_.AddPoint(samples[i++], corr_disable);
 		}
 		score_dist_.UpdateParams();
@@ -189,14 +188,14 @@ void TokenGenerator::WorkerTask() {
 		disabled_.insert(disabled_.end(), disabled.begin(), disabled.end());
 	}
 
-	gen_cnt_ += kBatchSize;
+	gen_cnt_ += batch_size_;
 }
 
 void TokenGenerator::Generate() {
 	std::cout << "Running simulated annealing for " << 30 * tot_cand_ << " steps" << std::endl;
 	ThreadPool pool;
 	for (int pass = 0; pass < 30; pass++) {
-		for (int i = 0; i * kBatchSize < tot_cand_; i++) {
+		for (int i = 0; i * batch_size_ < tot_cand_; i++) {
 			pool.Enqueue([this] { WorkerTask(); });
 		}
 		pool.Wait();

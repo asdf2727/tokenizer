@@ -3,6 +3,7 @@
 #include <atomic>
 #include <random>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -11,6 +12,7 @@
 class TokenGenerator {
 	const size_t tot_cand_ = 0;
 	const size_t pref_cand_;
+	const size_t batch_size_;
 
 	struct Candidate {
 		const std::string token;
@@ -51,15 +53,12 @@ class TokenGenerator {
 	[[nodiscard]] inline double CalcScore(size_t raw_score, size_t enabled_cnt) const;
 
 	template <bool Enable>
-	size_t TryAndStep(Candidate *cand);
-
-	template <bool Enable>
 	std::vector <Candidate *>  RunBatch(size_t work_cnt, int64_t *samples);
 
 	void WorkerTask();
 
 public:
-	TokenGenerator(std::unordered_map <std::string, size_t> &&cands, size_t pref_token_count);
+	TokenGenerator(std::unordered_map <std::string, size_t> &&cands, size_t pref_token_count, size_t batch_size = std::thread::hardware_concurrency());
 	~TokenGenerator();
 
 	void Generate();

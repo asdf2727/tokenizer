@@ -15,7 +15,8 @@ int main() {
 #ifdef RUN_SIM
 	std::vector <std::string> solution;
 	{
-		TokenGenerator generator(GetCandidates(metadata, 10), 30000);
+		// TODO compare different batch sizes for different thread counts to see if a relation can be inferred
+		TokenGenerator generator(GetCandidates(metadata, 10), 30000, 20);
 		generator.Generate();
 		solution = generator.GetSolution();
 	}
@@ -24,7 +25,7 @@ int main() {
 	TokenFile tkn(kDataPath + "/.tokens.json");
 #endif
 
-	std::string test_file = metadata.GetFiles().back().path;
+	/*std::string test_file = metadata.GetFiles().back().path;
 	std::cout << "Benchmark on file " << test_file << std::endl;
 	size_t init_size = 0;
 	size_t comp_size = 0;
@@ -43,5 +44,5 @@ int main() {
 		std::vector <size_t> ids = tkn.Tokenize(str);
 		std::cout << tkn.Prettify(ids) << '\n';
 		std::cout << "Compression factor " << (double)str.size() / (ids.size() - 2) << '\n';
-	}
+	}*/
 }
