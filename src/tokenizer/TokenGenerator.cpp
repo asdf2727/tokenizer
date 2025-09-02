@@ -15,12 +15,12 @@ TokenGenerator::TokenGenerator(std::unordered_map<std::string, size_t> &&cands,
 	pref_cand_(pref_token_count),
 	batch_size_(batch_size) {
 	std::string str(1, '\0');
-	for (int i = 0; i < UINT8_MAX; i++) {
+	for (int i = 0; i < 0x100; i++) {
 		str[0] = (char)i;
 		if (cands.contains(str)) continue;
 		cands[str] = 0;
 	}
-	*(size_t*)&tot_cand_ = cands.size();
+	*(size_t*)&tot_cand_ = cands.size() - 0x100;
 	std::cout << "Initializing optimizer with " << tot_cand_ << " candidates..." << std::endl;
 	std::unordered_map<std::string, Candidate*> candidates;
 	for (auto &[token, freq] : cands) {
@@ -36,8 +36,9 @@ TokenGenerator::TokenGenerator(std::unordered_map<std::string, size_t> &&cands,
 		}
 		else {
 			disabled_.push_back(cand);
-			score_dist_.AddPoint(cand->uses * (cand->token.size() - 1), 1);
-			cand->parent = candidates[cand->token.substr(0, cand->token.size() - 1)];
+			score_dist_.AddPoint(cand->l_branch.uses * (cand->token.size() - 1), 1);
+			cand->l_branch.parent = candidates[cand->token.substr(0, cand->token.size() - 1)];
+			cand->r_branch.parent = candidates[cand->token.substr(1)];
 		}
 	}
 	score_dist_.UpdateParams();
@@ -57,29 +58,49 @@ TokenGenerator::~TokenGenerator() {
 	}
 }
 
+#define BRANCH(LeftBranch) (LeftBranch ? node->l_branch : node->r_branch)
 
-int64_t TokenGenerator::Candidate::SimulateStep() const {
+template <bool LeftBranch>
+double TokenGenerator::Candidate::Branch::SimulateStep() const {
 	int64_t delta_len = 1;
-	for (const Candidate *par = parent; !par->enabled; par = par->parent) delta_len++;
+	for (const Candidate *node = parent; !node->enabled; node = BRANCH(LeftBranch).parent) delta_len++;
 	return delta_len * uses;
 }
 
-template <bool Enable>
-int64_t TokenGenerator::Candidate::ApplyStep() {
-	uint64_t loc_uses;
-	{
-		std::lock_guard my_lock(mutex);
-		enabled = Enable;
-		loc_uses = uses;
-	}
+template <bool Enable, bool LeftBranch>
+double TokenGenerator::Candidate::Branch::ApplyStep(const size_t saved_uses) const {
 	int64_t delta_len = 1;
-	for (Candidate *node = parent; true; node = node->parent) {
+	for (Candidate *node = parent; true; node = BRANCH(LeftBranch).parent) {
 		std::lock_guard node_lock(node->mutex);
-		node->uses -= (Enable ? 1 : -1) * loc_uses;
+		BRANCH(LeftBranch).uses -= (Enable ? 1 : -1) * saved_uses;
 		if (node->enabled) break;
 		delta_len++;
 	}
-	return delta_len * loc_uses;
+	return delta_len * saved_uses;
+}
+
+#undef BRANCH
+
+double TokenGenerator::Candidate::SimulateStep() const {
+	double score = 0;
+	score += l_branch.SimulateStep<true>();
+	//score += r_branch.SimulateStep<false>();
+	return score;
+}
+
+template <bool Enable>
+double TokenGenerator::Candidate::ApplyStep() {
+	uint64_t loc_l_uses, loc_r_uses;
+	{
+		std::lock_guard my_lock(mutex);
+		enabled = Enable;
+		loc_l_uses = l_branch.uses;
+		//loc_r_uses = r_branch.uses;
+	}
+	double score = 0;
+	score += l_branch.ApplyStep<Enable, true>(loc_l_uses);
+	//score += r_branch.ApplyStep<Enable, false>(loc_r_uses);
+	return score;
 }
 
 thread_local std::random_device rd;
@@ -95,15 +116,15 @@ TokenGenerator::Candidate* TokenGenerator::RandCandidate(std::vector<Candidate*>
 	return ret;
 }
 
-inline double TokenGenerator::CalcScore(const size_t raw_score, const size_t enabled_cnt) const {
+inline double TokenGenerator::CalcScore(const double raw_score, const size_t enabled_cnt) const {
 	if (enabled_cnt == 0) return 0;
 	const double contrib = tot_cand_ * score_dist_.GetBest((double)enabled_cnt / tot_cand_);
 	const double new_pref_fill = (double)enabled_cnt / pref_cand_;
-	return (double)raw_score / contrib * new_pref_fill * (2 - new_pref_fill);
+	return raw_score / contrib * new_pref_fill * (2 - new_pref_fill);
 }
 
 template <bool Enable>
-std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t work_cnt, int64_t *samples) {
+std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t work_cnt, double *samples) {
 	std::vector<Candidate*> working;
 	{
 		std::lock_guard lock(Enable ? disabled_mutex_ : enabled_mutex_);
@@ -116,10 +137,10 @@ std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t wo
 	for (Candidate *cand : working) {
 		// TODO find out what causes a drop of quality when pulling these 3 lines out
 		const size_t loc_enabled_cnt = enabled_cnt_;
-		const size_t loc_raw_score = raw_score_;
+		const double loc_raw_score = raw_score_;
 		const double loc_score = CalcScore(loc_raw_score, loc_enabled_cnt);
 
-		const int64_t delta_raw_score = cand->SimulateStep();
+		const double delta_raw_score = cand->SimulateStep();
 		const double new_score = CalcScore(loc_raw_score + (Enable ? delta_raw_score : -delta_raw_score),
 		                                   loc_enabled_cnt + (Enable ? 1 : -1));
 
@@ -144,17 +165,19 @@ void TokenGenerator::WorkerTask() {
 	// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
 	const uint64_t enabled_weight = enabled_cnt_ * (tot_cand_ - pref_cand_);
 	const uint64_t disabled_weight = (tot_cand_ - enabled_cnt_) * pref_cand_;
-	const uint64_t total_weight = enabled_weight + disabled_weight;
-	const double corr_enable = (double)total_weight / (tot_cand_ * pref_cand_);
-	const double corr_disable = (double)total_weight / (tot_cand_ * (tot_cand_ - pref_cand_));
-	const size_t enable_cnt = std::binomial_distribution(batch_size_, (double)disabled_weight / total_weight)(gen);
+	const double total_weight = enabled_weight + disabled_weight;
+	const double corr_enable = total_weight / (tot_cand_ * pref_cand_);
+	const double corr_disable = total_weight / (tot_cand_ * (tot_cand_ - pref_cand_));
+	size_t enable_cnt = std::binomial_distribution(batch_size_, (double)disabled_weight / total_weight)(gen);
+	if (enabled_cnt_ < batch_size_) enable_cnt = batch_size_;
+	if (tot_cand_ - enabled_cnt_ < batch_size_) enable_cnt = batch_size_ + enabled_cnt_ - tot_cand_;
 
-	//temp_ = 0.0005 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.4);
-	temp_ = 1e-20;
+	temp_ = 0.001 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.1);
+	//temp_ = 1e-20;
 
 	std::vector<Candidate*> enabled;
 	std::vector<Candidate*> disabled;
-	int64_t samples[batch_size_];
+	double samples[batch_size_];
 	if (enable_cnt > 0)
 		for (Candidate *cand : RunBatch<true>(enable_cnt, samples)) {
 			if (cand->enabled) enabled.push_back(cand);
@@ -191,16 +214,34 @@ void TokenGenerator::WorkerTask() {
 	gen_cnt_ += batch_size_;
 }
 
-void TokenGenerator::Generate() {
-	std::cout << "Running simulated annealing for " << 30 * tot_cand_ << " steps" << std::endl;
-	ThreadPool pool;
-	for (int pass = 0; pass < 30; pass++) {
+bool stdin_has_data()
+{
+	fd_set set;
+	timeval timeout;
+	FD_ZERO(&set);
+	FD_SET(STDIN_FILENO, &set); // STDIN_FILENO is usually 0
+
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 0; // 0 means non-blocking (poll)
+
+	int rv = select(STDIN_FILENO + 1, &set, NULL, NULL, &timeout);
+	return (rv > 0 && FD_ISSET(STDIN_FILENO, &set));
+}
+
+void TokenGenerator::Generate(const size_t pass_cnt) {
+	std::cout << "Running simulated annealing";
+	std::cout << ( pass_cnt == -1 ? "" : "for " + std::to_string(pass_cnt * tot_cand_) + " steps") << std::endl;
+	ThreadPool pool(std::min((uint64_t)std::thread::hardware_concurrency(), tot_cand_ / batch_size_));
+	for (int pass = 0; pass < pass_cnt || pass_cnt == -1; pass++) {
 		for (int i = 0; i * batch_size_ < tot_cand_; i++) {
 			pool.Enqueue([this] { WorkerTask(); });
 		}
 		pool.Wait();
-		std::cout << gen_cnt_ << "\t\t" << CalcScore(raw_score_, enabled_cnt_) << "\t\t" << enabled_cnt_ << std::endl;
+		std::cout << gen_cnt_ << "\t\t" << CalcScore(raw_score_, enabled_cnt_) << "\t\t";
+		std::cout << enabled_cnt_ << "\t\t" << temp_ << '\n';
+		if (stdin_has_data()) break;
 	}
+	std::cin.ignore();
 }
 
 std::vector<std::string> TokenGenerator::GetSolution() const {
@@ -212,6 +253,13 @@ std::vector<std::string> TokenGenerator::GetSolution() const {
 	std::ranges::sort(to_sort, [](const auto &x, const auto &y) {
 		return x.first == y.first ? *x.second < *y.second : x.first > y.first;
 	});
+
+	{
+		std::ofstream out("solution.txt");
+		for (const auto &x : to_sort) {
+			out << x.first << "\t" << *x.second << '\n';
+		}
+	}
 
 	std::vector<std::string> solution;
 	solution.reserve(to_sort.size() + roots_.size());

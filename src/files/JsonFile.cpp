@@ -15,6 +15,7 @@ JsonFile::JsonFile (std::string path, const bool no_read) :
 	path_(std::move(path)) {
 	valid_ = false;
 	if (no_read) return;
+
 	FILE *fp = fopen(path_.c_str(), "r");
 	if (fp == nullptr) return;
 	char buffer[65536];
@@ -33,7 +34,6 @@ JsonFile::~JsonFile () {
 
 void JsonFile::Save() {
 	if (!modified_) return;
-	valid_ = false;
 	FILE *fp = fopen(path_.c_str(), "w");
 	char buffer[65536];
 	rapidjson::FileWriteStream frs(fp, buffer, sizeof buffer);

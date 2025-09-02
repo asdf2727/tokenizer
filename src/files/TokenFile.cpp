@@ -15,7 +15,7 @@ bool TokenFile::Validate() {
 	if (!doc_.IsObject()) return false;
 	if (!doc_.HasMember("version")) return false;
 	if (!doc_["version"].IsString()) return false;
-	if (kBuildVersion == doc_["version"].GetString()) return false;
+	if (kBuildVersion != doc_["version"].GetString()) return false;
 
 	if (!doc_.HasMember("tokens")) return false;
 	if (!doc_["tokens"].IsArray()) return false;

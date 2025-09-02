@@ -24,10 +24,9 @@ DataFile::DataFile(const std::string &path) : JsonFile(path, false) {
 std::vector <DataFile::Entry> DataFile::GetEntries() const {
 	std::vector <Entry> entries;
 	for (const auto &entry : doc_.GetArray()) {
-		std::string text = entry["text"].GetString();
 		entries.emplace_back(entry["id"].GetString(),
-		                     text,
-		                     entry["title"].GetString());
+		                     entry["title"].GetString(),
+		                     entry["text"].GetString());
 	}
 	return entries;
 }

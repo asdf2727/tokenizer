@@ -119,21 +119,34 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 
 	{
 		ThreadPool pool;
-		for (auto &file : files) {
-			pool.Enqueue([&root_path, &file, &cand_map, &cand_mutex, max_len] {
-				const DataFile data(root_path / file.path);
-				if (!data.IsValid()) std::cerr << "Invalid file " << file.path << std::endl;
-
-				std::unordered_map <std::string, size_t> *my_cand;
-				{
-					std::unique_lock lock(cand_mutex);
-					my_cand = &cand_map[std::this_thread::get_id()];
-				}
-
-				for (const DataFile::Entry &entry : data.GetEntries()) ExtractCandidates(*my_cand, entry.text, max_len);
+		const auto *data = new DataFile(root_path / files[0].path);
+		for (int i = 0; i < files.size(); i++) {
+			DataFile *next_data;
+			if (i + 1 < files.size()) pool.Enqueue([&next_data, path = root_path / files[i + 1].path] {
+				next_data = new DataFile(path);
 			});
+			if (!data->IsValid()) std::cerr << "Invalid file " << files[i].path << std::endl;
+			for (const DataFile::Entry &entry : data->GetEntries()) {
+				pool.Enqueue([&cand_map, &cand_mutex, max_len, text = entry.text] {
+					std::unordered_map <std::string, size_t> *my_cand;
+					{
+						std::unique_lock lock(cand_mutex);
+						my_cand = &cand_map[std::this_thread::get_id()];
+					}
+
+					ExtractCandidates(*my_cand, text, max_len);
+					/*std::unordered_map <std::string, size_t> temp;
+					ExtractCandidates(temp, text, max_len);
+					my_cand->merge(temp);
+					for (const auto &[name, freq] : temp) {
+						(*my_cand)[name] += freq;
+					}*/
+				});
+			}
+			pool.Wait();
+			data = next_data;
+			std::cout << "File " << i << " done" << std::endl;
 		}
-		pool.Wait();
 	}
 
 	std::cout << "Candidates extracted, merging results..." << std::endl;
@@ -145,7 +158,6 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 		}
 		cand_map.clear();
 		ThreadPool pool;
-		size_t tasks_done = 0;
 		while (cand_vec.size() > 1) {
 			const size_t new_size = (cand_vec.size() + 1) / 2;
 			for (int i = 0; i < cand_vec.size() / 2; i++) {
@@ -208,7 +220,9 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 }*/
 
 std::unordered_map <std::string, size_t> GetCandidates(const MetadataFile &metadata, const size_t max_len, const size_t file_cnt, const bool rebuild) {
-	const std::string file_path = metadata.GetRootPath() / (".candidates-" + (file_cnt == -1 ? "all" : std::to_string(file_cnt)) + ".bin");
+	const std::string file_path = metadata.GetRootPath() / (".candidates-" +
+		(file_cnt == -1 ? "all" : std::to_string(file_cnt)) +
+		(max_len == -1 ? "" : "-" + std::to_string(max_len)) + ".bin");
 	std::unordered_map <std::string, size_t> cand;
 	if(!rebuild) cand = ReadFile(file_path);
 	if (cand.empty()) {
