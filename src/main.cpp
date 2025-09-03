@@ -9,7 +9,7 @@
 
 #define RUN_SIM
 
-const std::string kDataPath = "../../Input Data/Raw Text/test";
+const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
 
 int main() {
 	MetadataFile metadata(kDataPath + "/.metadata.json");
@@ -17,7 +17,7 @@ int main() {
 	std::vector <std::string> solution;
 	{
 		// TODO compare different batch sizes for different thread counts to see if a relation can be inferred
-		TokenGenerator generator(GetCandidates(metadata), 30000, 20);
+		TokenGenerator generator(GetCandidates(metadata, 10), 30000, 20);
 		generator.Generate();
 		std::cout << "Vocabulary done, saving..." << std::endl;
 		solution = generator.GetSolution();
@@ -37,7 +37,7 @@ int main() {
 		for (const DataFile::Entry &entry : test.GetEntries()) {
 			pool.Enqueue([text = entry.text, &tkn, &comp_size, &init_size] {
 				init_size += text.size();
-				comp_size += tkn.Tokenize(text).size();
+				comp_size += tkn.Tokenize(text).size() - 2;
 			});
 		}
 		std::cout << init_size << " characters, " << comp_size << " tokens - compression factor ";

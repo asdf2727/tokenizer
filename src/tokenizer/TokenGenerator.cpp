@@ -7,41 +7,65 @@
 #include <mutex>
 #include <ranges>
 
+#include "../files/CandidatesFile.h"
 #include "../utils/Multithread.h"
 
-TokenGenerator::TokenGenerator(std::unordered_map<std::string, size_t> &&cands,
+TokenGenerator::TokenGenerator(std::vector <std::pair <std::string, size_t>> &&cands,
                                const size_t pref_token_count,
                                const size_t batch_size) :
 	pref_cand_(pref_token_count),
 	batch_size_(batch_size) {
+
+	std::cout << "Initializing optimizer with " << cands.size() << " candidates..." << std::endl;
+	std::unordered_map<std::string, Candidate*> candidates;
+	std::vector <std::vector <Candidate *>> raw_cands;
+	{
+		raw_cands.resize(std::thread::hardware_concurrency());
+		while (!cands.empty()) {
+			auto &[name, freq] = cands.back();
+			cands.pop_back();
+			auto *cand = new Candidate(name, freq);
+
+			candidates[name] = cand;
+			if (name.size() == 1) {
+				cand->enabled = true;
+				roots_.push_back(cand);
+			}
+			else {
+				raw_cands[disabled_.size() % 20].push_back(cand);
+				disabled_.push_back(cand);
+			}
+		}
+	}
+
+	*(size_t*)&tot_cand_ = disabled_.size();
 	std::string str(1, '\0');
 	for (int i = 0; i < 0x100; i++) {
 		str[0] = (char)i;
-		if (cands.contains(str)) continue;
-		cands[str] = 0;
-	}
-	*(size_t*)&tot_cand_ = cands.size() - 0x100;
-	std::cout << "Initializing optimizer with " << tot_cand_ << " candidates..." << std::endl;
-	std::unordered_map<std::string, Candidate*> candidates;
-	for (auto &[token, freq] : cands) {
-		candidates[token] = new Candidate(token, freq);
+		if (!candidates.contains(str)) roots_.push_back(new Candidate(str, 0));
 	}
 
 	std::cout << "Computing parents..." << std::endl;
-	score_dist_.SetHalfLife((double)tot_cand_ * 0.25);
-	for (auto *cand : candidates | std::views::values) {
-		if (cand->token.size() == 1) {
-			cand->enabled = true;
-			roots_.push_back(cand);
-		}
-		else {
-			disabled_.push_back(cand);
-			score_dist_.AddPoint(cand->l_branch.uses * (cand->token.size() - 1), 1);
-			cand->l_branch.parent = candidates[cand->token.substr(0, cand->token.size() - 1)];
-			cand->r_branch.parent = candidates[cand->token.substr(1)];
-		}
+	std::atomic <double> moment1 = 0;
+	std::atomic <double> moment2 = 0;
+	ThreadPool pool;
+	for (auto &vec : raw_cands) {
+		pool.Enqueue([&vec, &moment1, &moment2, &candidates] {
+			for (auto *cand : vec) {
+				double temp = cand->l_branch.uses * (cand->token.size() - 1);
+				moment1 += temp;
+				temp *= temp;
+				moment2 += temp;
+				cand->l_branch.parent = candidates[cand->token.substr(0, cand->token.size() - 1)];
+				cand->r_branch.parent = candidates[cand->token.substr(1)];
+			}
+			vec.clear();
+		});
 	}
-	score_dist_.UpdateParams();
+	pool.Wait();
+
+
+	score_dist_.SetMoments(moment1 / tot_cand_, moment2 / tot_cand_);
 	score_dist_.SetHalfLife((double)tot_cand_ * 0.5);
 	// TODO add best candidates as initial solution
 }
@@ -133,7 +157,6 @@ std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t wo
 		}
 	}
 
-
 	for (Candidate *cand : working) {
 		// TODO find out what causes a drop of quality when pulling these 3 lines out
 		const size_t loc_enabled_cnt = enabled_cnt_;
@@ -188,7 +211,6 @@ void TokenGenerator::WorkerTask() {
 			if (cand->enabled) enabled.push_back(cand);
 			else disabled.push_back(cand);
 		}
-	//enabled_cnt_ += enabled.size() - (batch_size_ - enable_cnt);
 
 	{
 		size_t i = 0;
@@ -224,7 +246,7 @@ bool stdin_has_data()
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 0; // 0 means non-blocking (poll)
 
-	int rv = select(STDIN_FILENO + 1, &set, NULL, NULL, &timeout);
+	int rv = select(STDIN_FILENO + 1, &set, nullptr, nullptr, &timeout);
 	return (rv > 0 && FD_ISSET(STDIN_FILENO, &set));
 }
 
@@ -233,6 +255,7 @@ void TokenGenerator::Generate(const size_t pass_cnt) {
 	std::cout << ( pass_cnt == -1 ? "" : "for " + std::to_string(pass_cnt * tot_cand_) + " steps") << std::endl;
 	ThreadPool pool(std::min((uint64_t)std::thread::hardware_concurrency(), tot_cand_ / batch_size_));
 	for (int pass = 0; pass < pass_cnt || pass_cnt == -1; pass++) {
+		// TODO avoid master thread hogging queue mutex to allow others to start running
 		for (int i = 0; i * batch_size_ < tot_cand_; i++) {
 			pool.Enqueue([this] { WorkerTask(); });
 		}

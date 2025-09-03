@@ -6,6 +6,11 @@ void LomaxDist::SetHalfLife(const double half_life) {
 	alpha_ = std::log(2) / half_life;
 }
 
+void LomaxDist::SetMoments (const double moment1, const double moment2) {
+	moment1_ = moment1;
+	moment2_ = moment2;
+}
+
 void LomaxDist::AddPoint (double val, double weight) {
 	weight *= alpha_;
 	moment1_ += (val - moment1_) * weight;

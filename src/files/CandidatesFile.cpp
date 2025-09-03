@@ -15,85 +15,58 @@
 #include "MetadataFile.h"
 
 // TODO add check for candidate max len and rebuild if false
-std::unordered_map <std::string, size_t> ReadFile (const std::string &file_path) {
-	std::ifstream fin(file_path, std::ios::binary);
-	std::unordered_map <std::string, size_t> cand;
-	char buffer[kBuildVersion.size() + 1];
-	fin.read(buffer, kBuildVersion.size() + 1);
-	if (buffer[kBuildVersion.size()] != '\0') return cand;
-	if (kBuildVersion != buffer) return cand;
+std::vector <std::pair <std::string, size_t>> ReadFile (const std::string &file_path) {
+	std::cout << "Getting candidates..." << std::endl;
+	std::vector <std::pair <std::string, size_t>> cand;
+
+	std::string str;
+	{
+		std::ostringstream sstr;
+		std::ifstream fin(file_path, std::ios::binary);
+		if (!fin.good()) return {};
+		sstr << fin.rdbuf();
+		str = sstr.str();
+	}
+	const char *pos = str.c_str();
+
+	if (strcmp(pos, kBuildVersion.c_str()) != 0) return {};
+	pos += strlen(pos) + 1;
+
 	size_t entry_cnt;
-	fin.read(reinterpret_cast<char *>(&entry_cnt), sizeof(entry_cnt));
-	while (entry_cnt-- && fin.good()) {
+	strncpy((char *)&entry_cnt, pos, sizeof(entry_cnt));
+	pos += sizeof(entry_cnt);
+	while (entry_cnt-- && pos < str.c_str() + str.size()) {
 		size_t freq = 0;
-		size_t byte;
 		int sft = 0;
 		do {
-			byte = fin.get();
-			freq |= (byte & 0x7F) << sft;
+			freq |= (*pos & 0x7F) << sft;
 			sft += 7;
-		} while (byte & 0x80);
-		std::string name;
-		std::getline(fin, name, '\0');
-		cand[name] = freq;
+		} while (*pos++ & 0x80);
+		cand.emplace_back(std::string(pos), freq);
+		pos += strlen(pos) + 1;
 	}
-	if (!fin.good()) cand.clear();
-	fin.get();
-	if (!fin.eof()) cand.clear();
+	if (pos != str.c_str() + str.size() || entry_cnt != -1) return {};
 	return cand;
 }
 
-void WriteFile (const std::string &file_path, const std::unordered_map <std::string, size_t> &cand) {
- 	std::ofstream fout(file_path, std::ios::binary);
-	fout << kBuildVersion << '\0';
+void WriteFile (const std::string &file_path, const std::vector <std::pair <std::string, size_t>> &cand) {
+	std::cout << "Saving " << cand.size() << " candidates..." << std::endl;
+	std::string buf = kBuildVersion + '\0';
 	size_t entry_cnt = cand.size();
-	fout.write(reinterpret_cast<char *>(&entry_cnt), sizeof(entry_cnt));
+	buf.append(reinterpret_cast<char *>(&entry_cnt), sizeof(entry_cnt));
 	for (const auto &[name, freq] : cand) {
 		size_t copy = freq;
 		while (copy) {
 			uint8_t byte = copy & 0x7F;
 			copy >>= 7;
 			if (copy) byte |= 0x80;
-			fout.put(byte);
+			buf.push_back((char)byte);
 		}
-		fout << name << '\0';
-	}
-}
-
-struct ScanCandidatesEnv {
-	size_t max_token_length;
-	std::mutex cand_mutex;
-	std::vector <std::unordered_map <std::string, size_t>> cand;
-
-	ScanCandidatesEnv(const size_t max_length) : max_token_length(max_length) {}
-};
-
-struct ScanCandidatesTask {
-	std::string file_path;
-};
-
-bool ScanCandidates(ScanCandidatesEnv &env, ScanCandidatesTask &task, const size_t tid) {
-	const DataFile data(task.file_path);
-	if (!data.IsValid()) return false;
-
-	std::unordered_map <std::string, size_t> *local_freq;
-	{
-		std::unique_lock lock(env.cand_mutex);
-		local_freq = &env.cand[tid];
+		buf += name + '\0';
 	}
 
-	for (const DataFile::Entry &entry : data.GetEntries()) {
-		std::string text = entry.text;
-		std::ranges::transform(text, text.begin(),
-							   [](const unsigned char c) { return std::tolower(c); });
-		for (size_t i = 0; i < text.size(); i++) {
-			for (size_t len = 1; len <= std::min(env.max_token_length, text.size() - i); len++) {
-				(*local_freq)[text.substr(i, len)]++;
-				if (text[i + len] == ' ') break;
-			}
-		}
-	}
-	return true;
+ 	std::ofstream fout(file_path, std::ios::binary);
+	fout.write(buf.c_str(), buf.size());
 }
 
 void ExtractCandidates(std::unordered_map <std::string, size_t> &into, const std::string &text, const size_t max_token_length) {
@@ -108,32 +81,28 @@ void ExtractCandidates(std::unordered_map <std::string, size_t> &into, const std
 	}
 }
 
-std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &metadata, const size_t max_len, const size_t file_cnt) {
+std::vector <std::pair <std::string, size_t>> BuildCandidates(const MetadataFile &metadata, const size_t max_len, const size_t file_cnt) {
 	std::cout << "Building new candidates file..." << std::endl;
 	const std::filesystem::path root_path = metadata.GetRootPath();
 	std::vector <MetadataFile::Entry> files = metadata.GetFiles();
 	files.resize(std::min(file_cnt, files.size()));
 
-	std::mutex cand_mutex;
 	std::unordered_map <std::thread::id, std::unordered_map <std::string, size_t>> cand_map;
 
 	{
 		ThreadPool pool;
 		const auto *data = new DataFile(root_path / files[0].path);
 		for (int i = 0; i < files.size(); i++) {
+			std::cout << "Parsing file " << i << "..." << std::endl;
 			DataFile *next_data;
 			if (i + 1 < files.size()) pool.Enqueue([&next_data, path = root_path / files[i + 1].path] {
 				next_data = new DataFile(path);
 			});
 			if (!data->IsValid()) std::cerr << "Invalid file " << files[i].path << std::endl;
 			for (const DataFile::Entry &entry : data->GetEntries()) {
-				pool.Enqueue([&cand_map, &cand_mutex, max_len, text = entry.text] {
-					std::unordered_map <std::string, size_t> *my_cand;
-					{
-						std::unique_lock lock(cand_mutex);
-						my_cand = &cand_map[std::this_thread::get_id()];
-					}
-
+				pool.Enqueue([&cand_map, max_len, text = entry.text] {
+					std::unordered_map <std::string, size_t> *my_cand = &cand_map[std::this_thread::get_id()];
+					// TODO see which is faster
 					ExtractCandidates(*my_cand, text, max_len);
 					/*std::unordered_map <std::string, size_t> temp;
 					ExtractCandidates(temp, text, max_len);
@@ -144,13 +113,13 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 				});
 			}
 			pool.Wait();
+			delete data;
 			data = next_data;
-			std::cout << "File " << i << " done" << std::endl;
 		}
 	}
 
 	std::cout << "Candidates extracted, merging results..." << std::endl;
-	std::unordered_map<std::string, size_t> ret;
+	std::vector <std::pair <std::string, size_t>> ret;
 	{
 		std::vector <std::unordered_map <std::string, size_t>> cand_vec;
 		for (auto &&val : cand_map | std::views::values) {
@@ -160,6 +129,7 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 		ThreadPool pool;
 		while (cand_vec.size() > 1) {
 			const size_t new_size = (cand_vec.size() + 1) / 2;
+			std::cout << "Merging " << cand_vec.size() << " to " << new_size << std::endl;
 			for (int i = 0; i < cand_vec.size() / 2; i++) {
 				pool.Enqueue([to = &cand_vec[i], from = &cand_vec[new_size + i]] {
 					to->merge(*from);
@@ -170,10 +140,12 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 				});
 			}
 			pool.Wait();
-			std::cout << "Merged " << cand_vec.size() << " to " << new_size << std::endl;
 			cand_vec.resize(new_size);
 		}
-		ret = std::move(cand_vec[0]);
+		while (!cand_vec[0].empty()) {
+			auto temp = cand_vec[0].extract(cand_vec[0].cbegin());
+			ret.emplace_back(std::move(temp.key()), temp.mapped());
+		}
 	}
 	return ret;
 }
@@ -219,11 +191,11 @@ std::unordered_map <std::string, size_t> BuildCandidates(const MetadataFile &met
 	return fin.eof();
 }*/
 
-std::unordered_map <std::string, size_t> GetCandidates(const MetadataFile &metadata, const size_t max_len, const size_t file_cnt, const bool rebuild) {
+std::vector <std::pair <std::string, size_t>> GetCandidates(const MetadataFile &metadata, const size_t max_len, const size_t file_cnt, const bool rebuild) {
 	const std::string file_path = metadata.GetRootPath() / (".candidates-" +
 		(file_cnt == -1 ? "all" : std::to_string(file_cnt)) +
 		(max_len == -1 ? "" : "-" + std::to_string(max_len)) + ".bin");
-	std::unordered_map <std::string, size_t> cand;
+	std::vector <std::pair <std::string, size_t>> cand;
 	if(!rebuild) cand = ReadFile(file_path);
 	if (cand.empty()) {
 		cand = BuildCandidates(metadata, max_len, file_cnt);

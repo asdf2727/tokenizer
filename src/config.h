@@ -1,3 +1,3 @@
 #pragma once
 
-const std::string kBuildVersion = "0.2.0";
+const std::string kBuildVersion = "0.3.2";

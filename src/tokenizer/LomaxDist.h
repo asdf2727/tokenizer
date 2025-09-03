@@ -13,6 +13,9 @@ class LomaxDist {
 
 public:
 	void SetHalfLife (double half_life);
+
+	void SetMoments (double moment1, double moment2);
+
 	void AddPoint (double val, double weight);
 	void UpdateParams();
 

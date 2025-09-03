@@ -72,7 +72,7 @@ class TokenGenerator {
 	void WorkerTask();
 
 public:
-	TokenGenerator(std::unordered_map<std::string, size_t> &&cands, size_t pref_token_count,
+	TokenGenerator(std::vector <std::pair <std::string, size_t>> &&cands, size_t pref_token_count,
 	               size_t batch_size = std::thread::hardware_concurrency());
 	~TokenGenerator();
 
