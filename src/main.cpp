@@ -3,8 +3,8 @@
 #include "files/CandidatesFile.h"
 #include "files/DataFile.h"
 #include "files/MetadataFile.h"
-#include "tokenizer/TokenGenerator.h"
 #include "files/TokenFile.h"
+#include "tokenizer/TokenGenerator.h"
 #include "utils/Multithread.h"
 
 #define RUN_SIM
@@ -17,7 +17,7 @@ int main() {
 	std::vector <std::string> solution;
 	{
 		// TODO compare different batch sizes for different thread counts to see if a relation can be inferred
-		TokenGenerator generator(GetCandidates(metadata, 10), 30000, 20);
+		TokenGenerator generator(GetCandidates(metadata, 15, 20), 30000, 50);
 		generator.Generate();
 		std::cout << "Vocabulary done, saving..." << std::endl;
 		solution = generator.GetSolution();

@@ -103,13 +103,13 @@ std::vector <std::pair <std::string, size_t>> BuildCandidates(const MetadataFile
 				pool.Enqueue([&cand_map, max_len, text = entry.text] {
 					std::unordered_map <std::string, size_t> *my_cand = &cand_map[std::this_thread::get_id()];
 					// TODO see which is faster
-					ExtractCandidates(*my_cand, text, max_len);
-					/*std::unordered_map <std::string, size_t> temp;
+					//ExtractCandidates(*my_cand, text, max_len);
+					std::unordered_map <std::string, size_t> temp;
 					ExtractCandidates(temp, text, max_len);
 					my_cand->merge(temp);
 					for (const auto &[name, freq] : temp) {
 						(*my_cand)[name] += freq;
-					}*/
+					}
 				});
 			}
 			pool.Wait();
@@ -133,17 +133,19 @@ std::vector <std::pair <std::string, size_t>> BuildCandidates(const MetadataFile
 			for (int i = 0; i < cand_vec.size() / 2; i++) {
 				pool.Enqueue([to = &cand_vec[i], from = &cand_vec[new_size + i]] {
 					to->merge(*from);
-					for (const auto &[name, freq] : *from) {
-						(*to)[name] += freq;
+					while (!from->empty()) {
+						auto node = from->extract(from->begin());
+						(*to)[node.key()] += node.mapped();
 					}
-					from->clear();
 				});
 			}
 			pool.Wait();
 			cand_vec.resize(new_size);
 		}
+		std::cout << "Compressing final result..." << std::endl;
 		while (!cand_vec[0].empty()) {
 			auto temp = cand_vec[0].extract(cand_vec[0].cbegin());
+			if (temp.mapped() < 2) continue;
 			ret.emplace_back(std::move(temp.key()), temp.mapped());
 		}
 	}

@@ -64,7 +64,6 @@ TokenGenerator::TokenGenerator(std::vector <std::pair <std::string, size_t>> &&c
 	}
 	pool.Wait();
 
-
 	score_dist_.SetMoments(moment1 / tot_cand_, moment2 / tot_cand_);
 	score_dist_.SetHalfLife((double)tot_cand_ * 0.5);
 	// TODO add best candidates as initial solution
