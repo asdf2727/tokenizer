@@ -1,15 +1,15 @@
 #include <iostream>
 
-#include "files/CandidatesFile.h"
 #include "files/DataFile.h"
 #include "files/MetadataFile.h"
-#include "files/TokenFile.h"
+#include "files/SolutionFile.h"
+#include "tokenizer/GetTokens.h"
 #include "tokenizer/TokenGenerator.h"
 #include "utils/Multithread.h"
 
 #define RUN_SIM
 
-const std::string kDataPath = "../../Input Data/Raw Text/enwiki 2020-10-20";
+const std::string kDataPath = "../../Input Data/Raw Text/test";
 
 int main() {
 	MetadataFile metadata(kDataPath + "/.metadata.json");
@@ -17,14 +17,15 @@ int main() {
 	std::vector <std::string> solution;
 	{
 		// TODO compare different batch sizes for different thread counts to see if a relation can be inferred
-		TokenGenerator generator(GetCandidates(metadata, 15, 20), 30000, 50);
-		generator.Generate();
+		std::vector <annealing::Token> tokens = annealing::GetTokens(metadata, 10);
+		annealing::TokenGenerator generator((std::move(tokens)), 30000, 30);
+		generator.Generate(200);
 		std::cout << "Vocabulary done, saving..." << std::endl;
 		solution = generator.GetSolution();
 	}
-	TokenFile tkn(solution, kDataPath + "/.tokens.json");
+	SolutionFile tkn(solution, kDataPath + "/.tokens.json");
 #else
-	TokenFile tkn(kDataPath + "/.tokens.json");
+	SolutionFile tkn(kDataPath + "/.tokens.json");
 #endif
 
 	{

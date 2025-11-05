@@ -7,134 +7,56 @@
 #include <mutex>
 #include <ranges>
 
-#include "../files/CandidatesFile.h"
+#include "GetTokens.h"
 #include "../utils/Multithread.h"
 
-TokenGenerator::TokenGenerator(std::vector <std::pair <std::string, size_t>> &&cands,
+using namespace annealing;
+
+constexpr size_t kMutexLogCount = 20;
+
+TokenGenerator::TokenGenerator(std::vector <Token> &&tokens,
                                const size_t pref_token_count,
                                const size_t batch_size) :
 	pref_cand_(pref_token_count),
-	batch_size_(batch_size) {
+	batch_size_(batch_size),
+	mutexes_(1 << kMutexLogCount),
+	tokens_(std::move(tokens)) {
 
-	std::cout << "Initializing optimizer with " << cands.size() << " candidates..." << std::endl;
-	std::unordered_map<std::string, Candidate*> candidates;
-	std::vector <std::vector <Candidate *>> raw_cands;
-	{
-		raw_cands.resize(std::thread::hardware_concurrency());
-		while (!cands.empty()) {
-			auto &[name, freq] = cands.back();
-			cands.pop_back();
-			auto *cand = new Candidate(name, freq);
+	std::cout << "Initializing optimizer with " << tokens_.size() << " candidates..." << std::endl;
 
-			candidates[name] = cand;
-			if (name.size() == 1) {
-				cand->enabled = true;
-				roots_.push_back(cand);
-			}
-			else {
-				raw_cands[disabled_.size() % 20].push_back(cand);
-				disabled_.push_back(cand);
-			}
+	double moment1 = 0;
+	double moment2 = 0;
+	size_t mutex_id = 0;
+	for (Token &token : tokens_) {
+		token.mutex_ = &mutexes_[mutex_id];
+		mutex_id++;
+		mutex_id &= (1 << kMutexLogCount) - 1;
+		const size_t size = token.size();
+		if (size == 1) {
+			roots_.push_back(&token);
+			token.enabled_ = true;
+			continue;
 		}
+		disabled_.push_back(&token);
+		double temp = token.l_branch_.uses * (size - 1);
+		moment1 += temp;
+		temp *= temp;
+		moment2 += temp;
 	}
-
-	*(size_t*)&tot_cand_ = disabled_.size();
-	std::string str(1, '\0');
-	for (int i = 0; i < 0x100; i++) {
-		str[0] = (char)i;
-		if (!candidates.contains(str)) roots_.push_back(new Candidate(str, 0));
-	}
-
-	std::cout << "Computing parents..." << std::endl;
-	std::atomic <double> moment1 = 0;
-	std::atomic <double> moment2 = 0;
-	ThreadPool pool;
-	for (auto &vec : raw_cands) {
-		pool.Enqueue([&vec, &moment1, &moment2, &candidates] {
-			for (auto *cand : vec) {
-				double temp = cand->l_branch.uses * (cand->token.size() - 1);
-				moment1 += temp;
-				temp *= temp;
-				moment2 += temp;
-				cand->l_branch.parent = candidates[cand->token.substr(0, cand->token.size() - 1)];
-				cand->r_branch.parent = candidates[cand->token.substr(1)];
-			}
-			vec.clear();
-		});
-	}
-	pool.Wait();
-
+	const_cast<size_t&>(tot_cand_) = disabled_.size();
 	score_dist_.SetMoments(moment1 / tot_cand_, moment2 / tot_cand_);
 	score_dist_.SetHalfLife((double)tot_cand_ * 0.5);
-	// TODO add best candidates as initial solution
-}
-
-TokenGenerator::~TokenGenerator() {
-	for (const Candidate *cand : enabled_) {
-		delete cand;
-	}
-	for (const Candidate *cand : disabled_) {
-		delete cand;
-	}
-	for (const Candidate *cand : roots_) {
-		delete cand;
-	}
-}
-
-#define BRANCH(LeftBranch) (LeftBranch ? node->l_branch : node->r_branch)
-
-template <bool LeftBranch>
-double TokenGenerator::Candidate::Branch::SimulateStep() const {
-	int64_t delta_len = 1;
-	for (const Candidate *node = parent; !node->enabled; node = BRANCH(LeftBranch).parent) delta_len++;
-	return delta_len * uses;
-}
-
-template <bool Enable, bool LeftBranch>
-double TokenGenerator::Candidate::Branch::ApplyStep(const size_t saved_uses) const {
-	int64_t delta_len = 1;
-	for (Candidate *node = parent; true; node = BRANCH(LeftBranch).parent) {
-		std::lock_guard node_lock(node->mutex);
-		BRANCH(LeftBranch).uses -= (Enable ? 1 : -1) * saved_uses;
-		if (node->enabled) break;
-		delta_len++;
-	}
-	return delta_len * saved_uses;
-}
-
-#undef BRANCH
-
-double TokenGenerator::Candidate::SimulateStep() const {
-	double score = 0;
-	score += l_branch.SimulateStep<true>();
-	//score += r_branch.SimulateStep<false>();
-	return score;
-}
-
-template <bool Enable>
-double TokenGenerator::Candidate::ApplyStep() {
-	uint64_t loc_l_uses, loc_r_uses;
-	{
-		std::lock_guard my_lock(mutex);
-		enabled = Enable;
-		loc_l_uses = l_branch.uses;
-		//loc_r_uses = r_branch.uses;
-	}
-	double score = 0;
-	score += l_branch.ApplyStep<Enable, true>(loc_l_uses);
-	//score += r_branch.ApplyStep<Enable, false>(loc_r_uses);
-	return score;
 }
 
 thread_local std::random_device rd;
 thread_local std::mt19937 gen(rd());
 thread_local std::uniform_real_distribution<> chance(0, 1);
 
-TokenGenerator::Candidate* TokenGenerator::RandCandidate(std::vector<Candidate*> &from) {
+Token* TokenGenerator::RandCandidate(std::vector<Token*> &from) {
 	// TODO try to use chance_ to avoid new generator
 	const size_t rand_pos = std::uniform_int_distribution<size_t>(0, from.size() - 1)(gen);
 	std::swap(from[rand_pos], from.back());
-	Candidate *ret = from.back();
+	Token *ret = from.back();
 	from.pop_back();
 	return ret;
 }
@@ -147,16 +69,16 @@ inline double TokenGenerator::CalcScore(const double raw_score, const size_t ena
 }
 
 template <bool Enable>
-std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t work_cnt, double *samples) {
-	std::vector<Candidate*> working;
+std::vector<Token*> TokenGenerator::RunBatch(const size_t work_cnt, double *samples) {
+	std::vector<Token*> working;
 	{
 		std::lock_guard lock(Enable ? disabled_mutex_ : enabled_mutex_);
-		for (size_t i = 0; i < work_cnt; i++) {
+		for (size_t i = 0; i < work_cnt && !(Enable ? disabled_ : enabled_).empty(); i++) {
 			working.push_back(RandCandidate(Enable ? disabled_ : enabled_));
 		}
 	}
 
-	for (Candidate *cand : working) {
+	for (Token *cand : working) {
 		// TODO find out what causes a drop of quality when pulling these 3 lines out
 		const size_t loc_enabled_cnt = enabled_cnt_;
 		const double loc_raw_score = raw_score_;
@@ -183,7 +105,7 @@ std::vector<TokenGenerator::Candidate*> TokenGenerator::RunBatch(const size_t wo
 }
 
 void TokenGenerator::WorkerTask() {
-	// Calculate the chance of enabling a candidate, based on x (current enabled cnt) and P (preferred enabled cnt)
+	// Calculate the chance of enabling a Token, based on x (current enabled cnt) and P (preferred enabled cnt)
 	// I did this to combat the tendency of entropy to enable half of the candidates, completely messing up my score function
 	const uint64_t enabled_weight = enabled_cnt_ * (tot_cand_ - pref_cand_);
 	const uint64_t disabled_weight = (tot_cand_ - enabled_cnt_) * pref_cand_;
@@ -191,23 +113,23 @@ void TokenGenerator::WorkerTask() {
 	const double corr_enable = total_weight / (tot_cand_ * pref_cand_);
 	const double corr_disable = total_weight / (tot_cand_ * (tot_cand_ - pref_cand_));
 	size_t enable_cnt = std::binomial_distribution(batch_size_, (double)disabled_weight / total_weight)(gen);
-	if (enabled_cnt_ < batch_size_) enable_cnt = batch_size_;
-	if (tot_cand_ - enabled_cnt_ < batch_size_) enable_cnt = batch_size_ + enabled_cnt_ - tot_cand_;
+	if (enabled_cnt_ < batch_size_ - enable_cnt) enable_cnt = batch_size_ - enabled_cnt_;
+	enable_cnt = std::min(enable_cnt, tot_cand_ - enabled_cnt_);
 
-	temp_ = 0.001 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.1);
+	temp_ = 0.003 * std::exp(-(double)gen_cnt_ / tot_cand_ * 0.1);
 	//temp_ = 1e-20;
 
-	std::vector<Candidate*> enabled;
-	std::vector<Candidate*> disabled;
+	std::vector<Token*> enabled;
+	std::vector<Token*> disabled;
 	double samples[batch_size_];
 	if (enable_cnt > 0)
-		for (Candidate *cand : RunBatch<true>(enable_cnt, samples)) {
-			if (cand->enabled) enabled.push_back(cand);
+		for (Token *cand : RunBatch<true>(enable_cnt, samples)) {
+			if (cand->enabled_) enabled.push_back(cand);
 			else disabled.push_back(cand);
 		}
 	if (enable_cnt < batch_size_)
-		for (Candidate *cand : RunBatch<false>(batch_size_ - enable_cnt, samples + enable_cnt)) {
-			if (cand->enabled) enabled.push_back(cand);
+		for (Token *cand : RunBatch<false>(batch_size_ - enable_cnt, samples + enable_cnt)) {
+			if (cand->enabled_) enabled.push_back(cand);
 			else disabled.push_back(cand);
 		}
 
@@ -253,7 +175,7 @@ void TokenGenerator::Generate(const size_t pass_cnt) {
 	std::cout << "Running simulated annealing";
 	std::cout << ( pass_cnt == -1 ? "" : "for " + std::to_string(pass_cnt * tot_cand_) + " steps") << std::endl;
 	ThreadPool pool(std::min((uint64_t)std::thread::hardware_concurrency(), tot_cand_ / batch_size_));
-	for (int pass = 0; pass < pass_cnt || pass_cnt == -1; pass++) {
+	for (int pass = 0; pass <= pass_cnt; pass++) {
 		// TODO avoid master thread hogging queue mutex to allow others to start running
 		for (int i = 0; i * batch_size_ < tot_cand_; i++) {
 			pool.Enqueue([this] { WorkerTask(); });
@@ -263,33 +185,33 @@ void TokenGenerator::Generate(const size_t pass_cnt) {
 		std::cout << enabled_cnt_ << "\t\t" << temp_ << '\n';
 		if (stdin_has_data()) break;
 	}
-	std::cin.ignore();
 }
 
 std::vector<std::string> TokenGenerator::GetSolution() const {
-	std::vector<std::pair<size_t, const std::string*>> to_sort;
+	std::vector<std::pair<size_t, std::string>> to_sort;
 	to_sort.reserve(enabled_.size());
-	for (const Candidate *cand : enabled_) {
-		to_sort.emplace_back(cand->SimulateStep(), &cand->token);
+	for (const Token *cand : enabled_) {
+		to_sort.emplace_back(cand->SimulateStep(), cand->GetName());
 	}
 	std::ranges::sort(to_sort, [](const auto &x, const auto &y) {
-		return x.first == y.first ? *x.second < *y.second : x.first > y.first;
+		return x.first == y.first ? x.second < y.second : x.first > y.first;
 	});
 
 	{
+		// TEMPORARY
 		std::ofstream out("solution.txt");
 		for (const auto &x : to_sort) {
-			out << x.first << "\t" << *x.second << '\n';
+			out << x.first << "\t" << x.second << '\n';
 		}
 	}
 
 	std::vector<std::string> solution;
 	solution.reserve(to_sort.size() + roots_.size());
-	for (const auto *token : to_sort | std::views::values) {
-		solution.emplace_back(*token);
+	for (auto &&token : to_sort | std::views::values) {
+		solution.emplace_back(std::move(token));
 	}
 	for (const auto *cand : roots_) {
-		solution.emplace_back(cand->token);
+		solution.emplace_back(cand->GetName());
 	}
 	return solution;
 }

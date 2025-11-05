@@ -2,7 +2,6 @@
 
 #include <iostream>
 
-// #define NO_DISTRIBUTE_DEBUG
 #include <mutex>
 #include <utility>
 
@@ -78,10 +77,11 @@ MetadataFile::MetadataFile(const std::string &path, const bool rebuild):
 fs::path MetadataFile::GetRootPath() const {
 	return canonical(fs::path(path_).parent_path());
 }
-std::vector <MetadataFile::Entry> MetadataFile::GetFiles() const {
+std::vector <MetadataFile::Entry> MetadataFile::GetFiles(size_t file_cnt) const {
 	std::vector <Entry> files;
 	for (const auto &entry : doc_["files"].GetArray()) {
 		files.emplace_back(entry["path"].GetString());
+		if (--file_cnt == 0) break;
 	}
 	return files;
 }
